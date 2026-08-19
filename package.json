@@ -1,0 +1,12 @@
+{
+  "name": "leadengine",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Mobile-first local home-service lead management MVP",
+  "scripts": {
+    "start": "node server.js",
+    "test": "node --test",
+    "build": "node scripts/build.js"
+  },
+  "engines": { "node": ">=18" }
+}
