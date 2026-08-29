@@ -3,6 +3,7 @@ import { portableRuntime } from './portable-runtime';
 import { createMattressTestCheckout, getMattressTestConfirmation } from './stripe-test';
 import { sendMattressConfirmation } from './resend-portable';
 import { sendTestSms } from './twilio-portable';
+import { writeProof } from './storage-supabase';
 
 type MattressQuoteBody = {
   zip?: string;
@@ -324,6 +325,125 @@ route('POST', '/api/mattress-test-dispatch', async (request) => {
   }catch(error){
     return Response.json({error:error instanceof Error?error.message:'SMS send failed',testMode:true},{status:423});
   }
+});
+
+route('POST', '/api/mattress-test-driver-job', async (request) => {
+  if(!(process.env.SUPABASE_URL||process.env.POSTGREST_URL))
+    return Response.json({error:'Database is not configured in this preview.'},{status:503});
+  const body=await request.json() as Record<string,unknown>;
+  const phone=String(body.driverPhone||'').trim();
+  const address=String(body.address||'').trim();
+  const zip=String(body.zip||'').trim();
+  const item=String(body.item||'Mattress').trim();
+  const count=Math.max(1,Math.floor(Number(body.count)||1));
+  const serviceDate=String(body.serviceDate||'').trim();
+  const preferredTime=String(body.preferredTime||'').trim();
+  if(phone.replace(/\D/g,'').length<10||!address||!zip)
+    return Response.json({error:'Driver phone, pickup address and ZIP are required'},{status:400});
+  const token=crypto.randomUUID();
+  const record={
+    status:'offered',token,driverPhone:phone,driverName:String(body.driverName||'Test Driver'),
+    item,count,address,zip,serviceDate,preferredTime,
+    pickupPhotoPath:'',completionPhotoPath:'',
+    createdAt:new Date().toISOString(),testMode:true
+  };
+  const [id]=await portableRuntime.db.add('mattress-driver-dispatches',[record]);
+  if(!id) return Response.json({error:'Could not create test driver job'},{status:500});
+  const jobUrl=(process.env.PORTABLE_PUBLIC_URL||'http://localhost:3000')+'/#driver-job='+token;
+  return Response.json({created:true,id,token,jobUrl,testMode:true},{status:201});
+});
+
+route('GET', '/api/mattress-driver-job/:token', async (_request,params) => {
+  if(!(process.env.SUPABASE_URL||process.env.POSTGREST_URL))
+    return Response.json({error:'Database is not configured in this preview.'},{status:503});
+  const rows=(await portableRuntime.db.list<any>('mattress-driver-dispatches',{limit:100})).items;
+  const d=rows.find((x:any)=>String(x.token||'')===params.token);
+  if(!d) return Response.json({error:'Driver job link is invalid'},{status:404});
+  return Response.json({job:{
+    dispatchId:d.id,status:d.status,driverName:d.driverName||'',item:d.item||'Mattress',
+    count:Number(d.count||1),serviceDate:d.serviceDate||'',preferredTime:d.preferredTime||'',
+    address:d.address||'',zip:d.zip||'',
+    pickupPhotoUploaded:Boolean(d.pickupPhotoPath),
+    completionPhotoUploaded:Boolean(d.completionPhotoPath)
+  }});
+});
+
+route('POST', '/api/mattress-driver-job/:token/respond', async (request,params) => {
+  const body=await request.json() as Record<string,unknown>;
+  const decision=String(body.decision||'');
+  if(!['accept','decline'].includes(decision))
+    return Response.json({error:'Decision must be accept or decline'},{status:400});
+  const rows=(await portableRuntime.db.list<any>('mattress-driver-dispatches',{limit:100})).items;
+  const d=rows.find((x:any)=>String(x.token||'')===params.token);
+  if(!d) return Response.json({error:'Driver job link is invalid'},{status:404});
+  if(!['offered','text-sent'].includes(String(d.status||'')))
+    return Response.json({error:'Job is no longer awaiting a response'},{status:409});
+  const record={...d,status:decision==='accept'?'accepted':'declined',
+    [decision==='accept'?'acceptedAt':'declinedAt']:new Date().toISOString()};
+  delete (record as any).id;
+  await portableRuntime.db.update('mattress-driver-dispatches',[{id:d.id,record}]);
+  return Response.json({status:record.status});
+});
+
+route('POST', '/api/mattress-driver-job/:token/progress', async (request,params) => {
+  const body=await request.json() as Record<string,unknown>;
+  const next=String(body.status||'');
+  const rows=(await portableRuntime.db.list<any>('mattress-driver-dispatches',{limit:100})).items;
+  const d=rows.find((x:any)=>String(x.token||'')===params.token);
+  if(!d) return Response.json({error:'Driver job link is invalid'},{status:404});
+  const current=String(d.status||'');
+  const allowed=(current==='accepted'&&next==='en-route')||(current==='en-route'&&next==='at-pickup');
+  if(!allowed) return Response.json({error:'Invalid driver progress transition'},{status:409});
+  const record={...d,status:next,[next==='en-route'?'enRouteAt':'atPickupAt']:new Date().toISOString()};
+  delete (record as any).id;
+  await portableRuntime.db.update('mattress-driver-dispatches',[{id:d.id,record}]);
+  return Response.json({status:next});
+});
+
+route('POST', '/api/mattress-driver-job/:token/photo', async (request,params) => {
+  const body=await request.json() as Record<string,unknown>;
+  const kind=String(body.kind||'');
+  const content=String(body.content||'');
+  const contentType=String(body.contentType||'');
+  if(!['pickup','completion'].includes(kind))
+    return Response.json({error:'Photo kind must be pickup or completion'},{status:400});
+  if(!['image/jpeg','image/png','image/webp'].includes(contentType))
+    return Response.json({error:'Upload a JPG, PNG or WebP image'},{status:422});
+  if(content.length<100||content.length>7_500_000)
+    return Response.json({error:'Photo is missing or too large'},{status:422});
+  const rows=(await portableRuntime.db.list<any>('mattress-driver-dispatches',{limit:100})).items;
+  const d=rows.find((x:any)=>String(x.token||'')===params.token);
+  if(!d) return Response.json({error:'Driver job link is invalid'},{status:404});
+  if(!['accepted','en-route','at-pickup'].includes(String(d.status||'')))
+    return Response.json({error:'Accept the job before uploading proof'},{status:409});
+  try{
+    const ext=contentType==='image/png'?'png':contentType==='image/webp'?'webp':'jpg';
+    const proofPath='mattress-driver/'+d.id+'/'+kind+'-'+Date.now()+'.'+ext;
+    await writeProof(proofPath,content,contentType);
+    const record={...d,[kind==='pickup'?'pickupPhotoPath':'completionPhotoPath']:proofPath,
+      [kind==='pickup'?'pickupPhotoAt':'completionPhotoAt']:new Date().toISOString()};
+    delete (record as any).id;
+    await portableRuntime.db.update('mattress-driver-dispatches',[{id:d.id,record}]);
+    return Response.json({uploaded:true,kind});
+  }catch(error){
+    return Response.json({error:error instanceof Error?error.message:'Photo upload failed'},{status:502});
+  }
+});
+
+route('POST', '/api/mattress-driver-job/:token/complete', async (request,params) => {
+  const body=await request.json() as Record<string,unknown>;
+  const rows=(await portableRuntime.db.list<any>('mattress-driver-dispatches',{limit:100})).items;
+  const d=rows.find((x:any)=>String(x.token||'')===params.token);
+  if(!d) return Response.json({error:'Driver job link is invalid'},{status:404});
+  if(!d.pickupPhotoPath||!d.completionPhotoPath)
+    return Response.json({error:'Both pickup and completion photos are required'},{status:422});
+  if(!['accepted','en-route','at-pickup'].includes(String(d.status||'')))
+    return Response.json({error:'Job is not active'},{status:409});
+  const record={...d,status:'completed',completedAt:new Date().toISOString(),
+    completionNotes:String(body.notes||'').slice(0,1000)};
+  delete (record as any).id;
+  await portableRuntime.db.update('mattress-driver-dispatches',[{id:d.id,record}]);
+  return Response.json({status:'completed',proofValidated:true,testMode:Boolean(d.testMode)});
 });
 
 export { handleRequest };
