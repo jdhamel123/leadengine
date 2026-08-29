@@ -106,6 +106,21 @@ async function run(){
   assert.equal(offerRows.filter((d:any)=>d.status==='accepted').length,1);
   assert.ok(offerRows.some((d:any)=>d.status==='superseded'));
 
+  // Dispatch offer creation is idempotent for an already accepted order.
+  const repeatOffers=await call('/api/mattress-test-dispatch-offers',{
+    orderRef:'portable-order-'+suffix,
+    address:'100 Main St',
+    zip:'02035',
+    item:'Mattress',
+    count:1,
+    serviceDate:'2026-09-01',
+    preferredTime:'09:00'
+  });
+  assert.equal(repeatOffers.status,200);
+  const repeatBody=await repeatOffers.json() as Record<string,any>;
+  assert.equal(repeatBody.matched,true);
+  assert.match(String(repeatBody.error||''),/already accepted/i);
+
   // Continue lifecycle using a dedicated job for the primary contractor.
   const job=await data(await call('/api/mattress-test-driver-job',{
     driverProfileId:contractor.id,
