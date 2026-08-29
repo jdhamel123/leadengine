@@ -86,6 +86,15 @@ async function run() {
     else process.env.STRIPE_RESTRICTED_KEY=old;
   }
 
+  {
+    const response=await call('/api/mattress-test-dispatch',{
+      phone:'5085551212',jobUrl:'https://example.com/job',serviceDate:'2026-09-01',serviceTime:'09:00'
+    });
+    assert.equal(response.status,423);
+    const body=await json(response);
+    assert.match(String(body.error),/not allowlisted/i);
+  }
+
   console.log('Portable API contract tests passed.');
 }
 
