@@ -320,6 +320,17 @@ route('POST', '/api/mattress-test-confirmation', async (request) => {
       }
     }
 
+    if(receipt.serviceType==='pickup' && !dispatch.matched){
+      await upsertPortableException({
+        key:'coverage-gap:'+sessionId,type:'No contractor coverage',orderRef:sessionId,severity:'high',
+        action:'Add or approve a contractor covering this ZIP before fulfillment.',
+        note:'Confirmed test booking has no approved contractor coverage for ZIP '+String(receipt.zip||'')+'.',
+        autoAction:'Keep the booking in exception review; do not promise fulfillment automatically.'
+      });
+    }else if(receipt.serviceType==='pickup' && dispatch.matched){
+      await resolvePortableException('coverage-gap:'+sessionId,'Eligible contractor offers created');
+    }
+
     return Response.json({
       receipt,testMode:true,liveFunds:false,emailSent,emailId,
       dispatch,
@@ -368,6 +379,103 @@ route('POST', '/api/mattress-test-contractor', async (request) => {
   const portalUrl=(process.env.PORTABLE_PUBLIC_URL||'http://localhost:3000')+'/#contractor='+token;
   return Response.json({created:true,id,token,portalUrl,profile:{...profile,id}},{status:201});
 });
+
+async function upsertPortableException(input:{
+  key:string;type:string;orderRef?:string;dispatchId?:string;severity:'low'|'medium'|'high';
+  action:string;note:string;autoAction?:string;
+}) {
+  const rows=(await portableRuntime.db.list<any>('order-exceptions',{limit:500})).items;
+  const existing=rows.find((x:any)=>String(x.exceptionKey||'')===input.key && String(x.status||'open')!=='resolved');
+  const now=new Date().toISOString();
+  const record={
+    exceptionKey:input.key,type:input.type,orderRef:input.orderRef||'',dispatchId:input.dispatchId||'',
+    severity:input.severity,status:'open',action:input.action,note:input.note,
+    autoAction:input.autoAction||'',updatedAt:now,createdAt:existing?.createdAt||now,
+    source:'portable-exception-engine'
+  };
+  if(existing){
+    const next={...existing,...record}; delete next.id;
+    await portableRuntime.db.update('order-exceptions',[{id:existing.id,record:next}]);
+    return {...record,id:existing.id,duplicate:true};
+  }
+  const [id]=await portableRuntime.db.add('order-exceptions',[record]);
+  return {...record,id,duplicate:false};
+}
+
+async function resolvePortableException(key:string,resolution:string){
+  const rows=(await portableRuntime.db.list<any>('order-exceptions',{limit:500})).items;
+  const existing=rows.find((x:any)=>String(x.exceptionKey||'')===key && String(x.status||'')!=='resolved');
+  if(!existing) return false;
+  const record={...existing,status:'resolved',resolution,resolvedAt:new Date().toISOString(),updatedAt:new Date().toISOString()};
+  delete record.id;
+  await portableRuntime.db.update('order-exceptions',[{id:existing.id,record}]);
+  return true;
+}
+
+async function scanPortableExceptions() {
+  if(!(process.env.SUPABASE_URL||process.env.POSTGREST_URL))
+    return {scanned:false,created:[],resolved:[],reason:'database-not-configured'};
+
+  const dispatches=(await portableRuntime.db.list<any>('mattress-driver-dispatches',{limit:500})).items;
+  const now=Date.now(), created:any[]=[], resolved:string[]=[];
+  for(const d of dispatches){
+    const orderRef=String(d.orderRef||d.sessionId||d.id||'');
+    const status=String(d.status||'');
+    const createdAt=new Date(String(d.createdAt||0)).getTime();
+    const serviceAt=d.serviceDate ? new Date(String(d.serviceDate)+'T'+String(d.preferredTime||'12:00')).getTime() : 0;
+
+    const noAcceptanceKey='dispatch-no-accept:'+orderRef;
+    const overdueKey='dispatch-overdue:'+orderRef;
+    const missingProofKey='dispatch-missing-proof:'+String(d.id);
+    const declinedKey='dispatch-declined:'+String(d.id);
+
+    if(['offered','text-sent'].includes(status) && createdAt && now-createdAt>2*60*60*1000){
+      created.push(await upsertPortableException({
+        key:noAcceptanceKey,type:'No contractor accepted',orderRef,dispatchId:String(d.id),severity:'high',
+        action:'Offer the job to additional approved contractors or escalate for manual coverage.',
+        note:'No contractor accepted within two hours of the first offer.',
+        autoAction:'Re-run ZIP matching against any newly approved contractors; do not contact non-allowlisted numbers in migration mode.'
+      }));
+    }else if(['accepted','en-route','at-pickup','completed'].includes(status)){
+      if(await resolvePortableException(noAcceptanceKey,'Contractor accepted or job progressed')) resolved.push(noAcceptanceKey);
+    }
+
+    if(status==='declined'){
+      created.push(await upsertPortableException({
+        key:declinedKey,type:'Driver declined',orderRef,dispatchId:String(d.id),severity:'medium',
+        action:'Continue routing to remaining eligible contractors.',
+        note:'A contractor declined this offer.',
+        autoAction:'Leave sibling offers active; create a coverage-gap exception only if no eligible offers remain.'
+      }));
+    }else{
+      if(await resolvePortableException(declinedKey,'Dispatch no longer in declined state')) resolved.push(declinedKey);
+    }
+
+    if(serviceAt && now>serviceAt+60*60*1000 && !['completed','declined','superseded'].includes(status)){
+      created.push(await upsertPortableException({
+        key:overdueKey,type:'Pickup overdue',orderRef,dispatchId:String(d.id),severity:'high',
+        action:'Check driver progress and customer impact.',
+        note:'Scheduled pickup time is more than one hour past due and the job is not completed.',
+        autoAction:'Flag for owner review; outbound customer/driver contact remains gated in migration mode.'
+      }));
+    }else if(status==='completed' || (serviceAt && now<=serviceAt+60*60*1000)){
+      if(await resolvePortableException(overdueKey,'Pickup completed or no longer overdue')) resolved.push(overdueKey);
+    }
+
+    if(status==='completed' && (!d.pickupPhotoPath || !d.completionPhotoPath)){
+      created.push(await upsertPortableException({
+        key:missingProofKey,type:'Completion proof missing',orderRef,dispatchId:String(d.id),severity:'high',
+        action:'Hold completion reconciliation until both proof photos are present.',
+        note:'Job is marked complete without both required proof images.',
+        autoAction:'Do not create additional contractor earnings or final reconciliation until proof is restored.'
+      }));
+    }else if(d.pickupPhotoPath && d.completionPhotoPath){
+      if(await resolvePortableException(missingProofKey,'Both proof photos are present')) resolved.push(missingProofKey);
+    }
+  }
+
+  return {scanned:true,created,resolved};
+}
 
 async function createDispatchOffers(input:{
   orderRef:string;zip:string;address:string;item:string;count:number;serviceDate:string;preferredTime:string;
@@ -794,6 +902,24 @@ route('GET', '/api/contractor-portal/:token', async (_request,params) => {
     summary:{ytdEarned,ytdPaid,owed:Math.max(0,ytdEarned-ytdPaid),completedJobs:jobs.length},
     jobs,payments,
     testMode:Boolean(profile.testMode)
+  });
+});
+
+route('POST', '/api/portable-exceptions/scan', async () => {
+  const result=await scanPortableExceptions();
+  return Response.json(result);
+});
+
+route('GET', '/api/portable-exceptions', async () => {
+  if(!(process.env.SUPABASE_URL||process.env.POSTGREST_URL))
+    return Response.json({exceptions:[],databaseConfigured:false});
+  const rows=(await portableRuntime.db.list<any>('order-exceptions',{limit:500})).items
+    .filter((x:any)=>String(x.source||'')==='portable-exception-engine')
+    .sort((a:any,b:any)=>String(b.updatedAt||b.createdAt||'').localeCompare(String(a.updatedAt||a.createdAt||'')));
+  return Response.json({
+    exceptions:rows,
+    open:rows.filter((x:any)=>String(x.status||'')!=='resolved').length,
+    high:rows.filter((x:any)=>String(x.status||'')!=='resolved'&&String(x.severity||'')==='high').length
   });
 });
 
