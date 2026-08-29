@@ -16,7 +16,8 @@
     "migrate:export": "tsx scripts/export-portable-snapshot.ts",
     "migrate:reconcile": "tsx scripts/reconcile-snapshot.ts",
     "ops:scan": "tsx scripts/run-exception-scan.ts",
-    "ops:health": "tsx scripts/healthcheck-deep.ts"
+    "ops:health": "tsx scripts/healthcheck-deep.ts",
+    "ops:maintenance": "tsx scripts/maintenance.ts"
   },
   "dependencies": {
     "lucide-react": "^0.469.0",
