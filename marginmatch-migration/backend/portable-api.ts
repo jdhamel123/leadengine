@@ -19,6 +19,10 @@ async function requirePortableAdmin(request:Request){
   return requireAdmin(request);
 }
 
+function databaseConfigured(){
+  return Boolean(process.env.DATABASE_URL||process.env.SUPABASE_URL||process.env.POSTGREST_URL);
+}
+
 const launchZipTown:Record<string,string>={02035:'Foxborough',02048:'Mansfield',02093:'Wrentham',02081:'Walpole',02067:'Sharon',02760:'North Attleborough',02766:'Norton'};
 const launchZips = new Set(Object.keys(launchZipTown));
 
@@ -67,7 +71,7 @@ route('GET', '/api/auth/me', async (request) => {
 route('GET', '/api/health', async () => {
   const checks: Record<string, unknown> = {
     runtime: 'portable',
-    databaseConfigured: Boolean(process.env.SUPABASE_URL || process.env.POSTGREST_URL),
+    databaseConfigured: databaseConfigured(),
     secretsMode: 'environment',
     aiConfigured: Boolean(process.env.OPENAI_API_KEY),
     authVerifierConfigured: Boolean(process.env.AUTH_VERIFY_URL),
@@ -88,7 +92,7 @@ route('GET', '/api/health', async () => {
 });
 
 route('POST', '/api/analytics-event', async (request) => {
-  if(!(process.env.SUPABASE_URL||process.env.POSTGREST_URL))
+  if(!databaseConfigured())
     return Response.json({recorded:false,databaseConfigured:false},{status:202});
   const body=await request.json() as Record<string,unknown>;
   if(String(body.type||'')!=='pageview') return Response.json({error:'Unsupported analytics event'},{status:400});
@@ -150,7 +154,7 @@ route('POST', '/api/mattress-quote', async (request) => {
     });
   }
 
-  if (!(process.env.SUPABASE_URL || process.env.POSTGREST_URL)) {
+  if (!databaseConfigured()) {
     return Response.json({
       status: 'PRELIVE',
       verified: false,
@@ -213,7 +217,7 @@ route('POST', '/api/mattress-quote', async (request) => {
 });
 
 route('POST', '/api/leads', async (request) => {
-  if (!(process.env.SUPABASE_URL || process.env.POSTGREST_URL)) {
+  if (!databaseConfigured()) {
     return Response.json({ error: 'Database is not configured in this preview.' }, { status: 503 });
   }
 
@@ -285,7 +289,7 @@ route('POST', '/api/mattress-test-checkout', async (request) => {
     if(!created.sessionId||!created.url)
       return Response.json({error:'Stripe did not return a test checkout session'},{status:502});
 
-    if(process.env.SUPABASE_URL||process.env.POSTGREST_URL){
+    if(databaseConfigured()){
       await portableRuntime.db.add('mattress-test-orders',[{
         sessionId:created.sessionId,zip,email,phone,address:drop?'PRIVATE DROP-OFF LOCATION':address,
         preferredDate,preferredTime,item,count,access,customerPrice:quoted,
@@ -314,7 +318,7 @@ route('POST', '/api/mattress-test-confirmation', async (request) => {
       return Response.json({error:'Stripe test booking is not complete'},{status:409});
 
     let order:any=null;
-    if(process.env.SUPABASE_URL||process.env.POSTGREST_URL){
+    if(databaseConfigured()){
       const rows=(await portableRuntime.db.list<any>('mattress-test-orders',{limit:100})).items;
       order=rows.find((r:any)=>r.sessionId===sessionId)||null;
     }
@@ -405,7 +409,7 @@ route('POST', '/api/mattress-test-dispatch', async (request) => {
 
 route('GET', '/api/mattress-suppliers', async (request) => {
   await requirePortableAdmin(request);
-  if(!(process.env.SUPABASE_URL||process.env.POSTGREST_URL))
+  if(!databaseConfigured())
     return Response.json({error:'Database is not configured in this preview.'},{status:503});
   const rows=(await portableRuntime.db.list<any>('mattress-suppliers',{limit:100})).items;
   const verified=rows.filter((r:any)=>r.haulerVerified&&r.recyclerVerified&&Number(r.pickupCost)>=0&&Number(r.recyclingCost)>=0);
@@ -427,7 +431,7 @@ route('GET', '/api/mattress-suppliers', async (request) => {
 
 route('POST', '/api/mattress-suppliers', async (request) => {
   await requirePortableAdmin(request);
-  if(!(process.env.SUPABASE_URL||process.env.POSTGREST_URL))
+  if(!databaseConfigured())
     return Response.json({error:'Database is not configured in this preview.'},{status:503});
   const body=await request.json() as Record<string,unknown>;
   const company=String(body.company||'').trim();
@@ -454,7 +458,7 @@ route('POST', '/api/mattress-suppliers', async (request) => {
 
 route('POST', '/api/mattress-test-contractor', async (request) => {
   await requirePortableAdmin(request);
-  if(!(process.env.SUPABASE_URL||process.env.POSTGREST_URL))
+  if(!databaseConfigured())
     return Response.json({error:'Database is not configured in this preview.'},{status:503});
   const body=await request.json() as Record<string,unknown>;
   const name=String(body.name||'').trim();
@@ -600,7 +604,7 @@ async function executeSafeExceptionAction(exception:any,decision:any){
 }
 
 async function scanPortableExceptions() {
-  if(!(process.env.SUPABASE_URL||process.env.POSTGREST_URL))
+  if(!databaseConfigured())
     return {scanned:false,created:[],resolved:[],reason:'database-not-configured'};
 
   const dispatches=(await portableRuntime.db.list<any>('mattress-driver-dispatches',{limit:500})).items;
@@ -719,7 +723,7 @@ async function createDispatchOffers(input:{
 
 route('POST', '/api/mattress-test-dispatch-offers', async (request) => {
   await requirePortableAdmin(request);
-  if(!(process.env.SUPABASE_URL||process.env.POSTGREST_URL))
+  if(!databaseConfigured())
     return Response.json({error:'Database is not configured in this preview.'},{status:503});
   const body=await request.json() as Record<string,unknown>;
   const zip=String(body.zip||'').trim();
@@ -737,7 +741,7 @@ route('POST', '/api/mattress-test-dispatch-offers', async (request) => {
 
 route('POST', '/api/mattress-test-driver-job', async (request) => {
   await requirePortableAdmin(request);
-  if(!(process.env.SUPABASE_URL||process.env.POSTGREST_URL))
+  if(!databaseConfigured())
     return Response.json({error:'Database is not configured in this preview.'},{status:503});
   const body=await request.json() as Record<string,unknown>;
   const phone=String(body.driverPhone||'').trim();
@@ -770,7 +774,7 @@ route('POST', '/api/mattress-test-driver-job', async (request) => {
 });
 
 route('GET', '/api/mattress-driver-job/:token', async (_request,params) => {
-  if(!(process.env.SUPABASE_URL||process.env.POSTGREST_URL))
+  if(!databaseConfigured())
     return Response.json({error:'Database is not configured in this preview.'},{status:503});
   const rows=(await portableRuntime.db.list<any>('mattress-driver-dispatches',{limit:100})).items;
   const d=rows.find((x:any)=>String(x.token||'')===params.token);
@@ -900,7 +904,7 @@ route('POST', '/api/mattress-driver-job/:token/complete', async (request,params)
 });
 
 route('POST', '/api/contractor-applications', async (request) => {
-  if(!(process.env.SUPABASE_URL||process.env.POSTGREST_URL))
+  if(!databaseConfigured())
     return Response.json({error:'Database is not configured in this preview.'},{status:503});
 
   const body=await request.json() as Record<string,unknown>;
@@ -943,7 +947,7 @@ route('POST', '/api/contractor-applications', async (request) => {
 
 route('POST', '/api/contractor-applications/:id/approve', async (request,params) => {
   await requirePortableAdmin(request);
-  if(!(process.env.SUPABASE_URL||process.env.POSTGREST_URL))
+  if(!databaseConfigured())
     return Response.json({error:'Database is not configured in this preview.'},{status:503});
 
   const body=await request.json() as Record<string,unknown>;
@@ -987,7 +991,7 @@ route('POST', '/api/contractor-applications/:id/approve', async (request,params)
 
 route('GET', '/api/contractor-admin', async (request) => {
   await requirePortableAdmin(request);
-  if(!(process.env.SUPABASE_URL||process.env.POSTGREST_URL))
+  if(!databaseConfigured())
     return Response.json({error:'Database is not configured in this preview.'},{status:503});
 
   const profiles=(await portableRuntime.db.list<any>('mattress-driver-profiles',{limit:200})).items
@@ -1029,7 +1033,7 @@ route('GET', '/api/contractor-admin', async (request) => {
 
 route('POST', '/api/contractor-payments', async (request) => {
   await requirePortableAdmin(request);
-  if(!(process.env.SUPABASE_URL||process.env.POSTGREST_URL))
+  if(!databaseConfigured())
     return Response.json({error:'Database is not configured in this preview.'},{status:503});
 
   const body=await request.json() as Record<string,unknown>;
@@ -1070,7 +1074,7 @@ route('POST', '/api/contractor-payments', async (request) => {
 });
 
 route('GET', '/api/contractor-portal/:token', async (_request,params) => {
-  if(!(process.env.SUPABASE_URL||process.env.POSTGREST_URL))
+  if(!databaseConfigured())
     return Response.json({error:'Database is not configured in this preview.'},{status:503});
   const profiles=(await portableRuntime.db.list<any>('mattress-driver-profiles',{limit:100})).items;
   const profile=profiles.find((p:any)=>String(p.portalToken||'')===params.token && p.contractorApproved===true);
@@ -1099,7 +1103,7 @@ route('GET', '/api/contractor-portal/:token', async (_request,params) => {
 
 route('GET', '/api/portable-operations', async (request) => {
   await requirePortableAdmin(request);
-  if(!(process.env.SUPABASE_URL||process.env.POSTGREST_URL))
+  if(!databaseConfigured())
     return Response.json({error:'Database is not configured in this preview.'},{status:503});
 
   const [leads,orders,dispatches,exceptions,profiles,payments]=await Promise.all([
@@ -1139,7 +1143,7 @@ route('GET', '/api/portable-operations', async (request) => {
 
 route('GET', '/api/owner-cockpit', async (request) => {
   await requirePortableAdmin(request);
-  if(!(process.env.SUPABASE_URL||process.env.POSTGREST_URL))
+  if(!databaseConfigured())
     return Response.json({error:'Database is not configured in this preview.'},{status:503});
 
   const [orders,mattress,dispatches,exceptions,profiles,payments]=await Promise.all([
@@ -1218,7 +1222,7 @@ route('GET', '/api/self-test', async (request) => {
   add('sms-default-off',process.env.ENABLE_OUTBOUND_TEST_SMS!=='true','Outbound test SMS remains disabled unless explicitly enabled');
   add('production-lock',true,'Production money movement remains locked in portable migration runtime');
 
-  if(process.env.SUPABASE_URL||process.env.POSTGREST_URL){
+  if(databaseConfigured()){
     try{
       await portableRuntime.db.list('ops-health',{limit:1});
       add('database',true,'Database reachable');
@@ -1233,7 +1237,7 @@ route('GET', '/api/self-test', async (request) => {
 
 route('GET', '/api/migration-readiness', async (request) => {
   await requirePortableAdmin(request);
-  const dbConfigured=Boolean(process.env.SUPABASE_URL||process.env.POSTGREST_URL);
+  const dbConfigured=databaseConfigured();
   let dbReachable=false;
   if(dbConfigured){
     try{await portableRuntime.db.list('ops-health',{limit:1});dbReachable=true;}catch{}
@@ -1307,7 +1311,7 @@ route('POST', '/api/portable-exceptions/scan', async (request) => {
 
 route('POST', '/api/portable-exceptions/ai-resolve', async (request) => {
   await requirePortableAdmin(request);
-  if(!(process.env.SUPABASE_URL||process.env.POSTGREST_URL))
+  if(!databaseConfigured())
     return Response.json({resolved:0,decisions:[],databaseConfigured:false});
 
   const rows=(await portableRuntime.db.list<any>('order-exceptions',{limit:500})).items
@@ -1335,7 +1339,7 @@ route('POST', '/api/portable-exceptions/ai-resolve', async (request) => {
 
 route('GET', '/api/portable-exceptions', async (request) => {
   await requirePortableAdmin(request);
-  if(!(process.env.SUPABASE_URL||process.env.POSTGREST_URL))
+  if(!databaseConfigured())
     return Response.json({exceptions:[],databaseConfigured:false});
   const rows=(await portableRuntime.db.list<any>('order-exceptions',{limit:500})).items
     .filter((x:any)=>String(x.source||'')==='portable-exception-engine')
