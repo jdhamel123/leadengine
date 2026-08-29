@@ -61,10 +61,29 @@ async function run() {
   }
 
   {
-    const response=await call('/api/mattress-test-checkout',{});
-    assert.equal(response.status,423);
+    const response=await call('/api/mattress-test-checkout',{
+      zip:'02035',email:'test@example.com',phone:'5085551212',address:'1 Main St',
+      preferredDate:'2026-09-01',preferredTime:'09:00',item:'Mattress',count:1,
+      access:'Curbside / garage',condition:'Clean and dry',customerPrice:999
+    });
+    assert.equal(response.status,422);
     const body=await json(response);
-    assert.equal(body.code,'MIGRATION_PAYMENT_LOCK');
+    assert.match(String(body.error),/price does not match/i);
+  }
+
+  {
+    const old=process.env.STRIPE_RESTRICTED_KEY;
+    process.env.STRIPE_RESTRICTED_KEY='rk_live_not_allowed';
+    const response=await call('/api/mattress-test-checkout',{
+      zip:'02035',email:'test@example.com',phone:'5085551212',address:'1 Main St',
+      preferredDate:'2026-09-01',preferredTime:'09:00',item:'Mattress',count:1,
+      access:'Curbside / garage',condition:'Clean and dry',customerPrice:119
+    });
+    assert.equal(response.status,502);
+    const body=await json(response);
+    assert.match(String(body.error),/test-mode key required/i);
+    if(old===undefined) delete process.env.STRIPE_RESTRICTED_KEY;
+    else process.env.STRIPE_RESTRICTED_KEY=old;
   }
 
   console.log('Portable API contract tests passed.');
