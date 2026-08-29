@@ -75,10 +75,10 @@ export function MigrationControl(){
     </section>
 
     {testMsg&&<div className='mt-4 rounded-2xl border border-violet-400/20 bg-violet-950/30 p-4 text-sm text-violet-100'>{testMsg}</div>}
-    <div className='mt-4 grid gap-3 sm:grid-cols-4'>
+    <div className='mt-4 grid gap-3 sm:grid-cols-5'>
       <a href='#owner' className='rounded-2xl bg-emerald-400 p-4 text-center font-black text-slate-950'>Owner Cockpit</a>
       <a href='#control-center' className='rounded-2xl bg-orange-400 p-4 text-center font-black text-slate-950'>Operations</a>
-      <a href='#exceptions' className='rounded-2xl bg-amber-300 p-4 text-center font-black text-slate-950'>Exceptions</a>
+      <a href='#exceptions' className='rounded-2xl bg-amber-300 p-4 text-center font-black text-slate-950'>Exceptions</a><a href='#data-migration' className='rounded-2xl bg-fuchsia-300 p-4 text-center font-black text-slate-950'>Data Migration</a>
       <button onClick={runSelfTests} className='rounded-2xl bg-violet-300 p-4 text-center font-black text-slate-950'>Run self-tests</button>
     </div>
   </div></div>;
