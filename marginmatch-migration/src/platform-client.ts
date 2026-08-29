@@ -34,7 +34,11 @@ export const api = {
 };
 
 export const auth = {
-  async isSignedIn(): Promise<boolean> {
+  isSignedIn(): boolean {
+    return Boolean(token());
+  },
+
+  async validateSession(): Promise<boolean> {
     if (!token()) return false;
     try {
       const response = await fetch('/api/auth/me', {
