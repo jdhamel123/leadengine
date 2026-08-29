@@ -17,7 +17,8 @@
     "migrate:reconcile": "tsx scripts/reconcile-snapshot.ts",
     "ops:scan": "tsx scripts/run-exception-scan.ts",
     "ops:health": "tsx scripts/healthcheck-deep.ts",
-    "ops:maintenance": "tsx scripts/maintenance.ts"
+    "ops:maintenance": "tsx scripts/maintenance.ts",
+    "release:metadata": "tsx scripts/release-metadata.ts"
   },
   "dependencies": {
     "lucide-react": "^0.469.0",
