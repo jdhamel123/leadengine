@@ -12,7 +12,7 @@ import { resolveUser } from './auth-portable';
 import { writePortableObject, signedPortableUrls } from './storage-portable';
 
 type AnyRecord=Record<string,any>;
-type Ctx={request:Request;body:any;params:Record<string,string>;query:Record<string,string>;user?:{id:string;email?:string}};
+type Ctx={request:Request;body:any;params:Record<string,string>;query:Record<string,string>;event?:any;user?:{id:string;email?:string}};
 
 export const json=(value:unknown,status=200)=>Response.json(value,{status});
 export const error=(message:string,status=400)=>Response.json({error:message},{status});
@@ -127,7 +127,7 @@ export function router(routeMap:Record<string,Array<(ctx:Ctx)=>unknown>>){
         try{body=JSON.parse(text);}catch{body=text;}
       }
     }
-    const ctx:Ctx={request,body,params,query};
+    const ctx:Ctx={request,body,params,query,event:undefined};
     try{
       for(const fn of route.chain){
         const result=await fn(ctx);
