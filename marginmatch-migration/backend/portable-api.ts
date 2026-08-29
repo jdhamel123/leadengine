@@ -327,6 +327,27 @@ route('POST', '/api/mattress-test-dispatch', async (request) => {
   }
 });
 
+route('POST', '/api/mattress-test-contractor', async (request) => {
+  if(!(process.env.SUPABASE_URL||process.env.POSTGREST_URL))
+    return Response.json({error:'Database is not configured in this preview.'},{status:503});
+  const body=await request.json() as Record<string,unknown>;
+  const name=String(body.name||'').trim();
+  const phone=String(body.phone||'').trim();
+  const payPerJob=Math.max(0,Number(body.payPerJob||0));
+  if(!name||phone.replace(/\D/g,'').length<10||payPerJob<=0)
+    return Response.json({error:'Name, valid phone and positive pay-per-job are required'},{status:400});
+  const token=crypto.randomUUID();
+  const profile={
+    name,phone,payPerJob,portalToken:token,contractorApproved:true,
+    status:'approved-test',serviceZips:Array.isArray(body.serviceZips)?body.serviceZips:[],
+    createdAt:new Date().toISOString(),testMode:true
+  };
+  const [id]=await portableRuntime.db.add('mattress-driver-profiles',[profile]);
+  if(!id) return Response.json({error:'Could not create test contractor'},{status:500});
+  const portalUrl=(process.env.PORTABLE_PUBLIC_URL||'http://localhost:3000')+'/#contractor='+token;
+  return Response.json({created:true,id,token,portalUrl,profile:{...profile,id}},{status:201});
+});
+
 route('POST', '/api/mattress-test-driver-job', async (request) => {
   if(!(process.env.SUPABASE_URL||process.env.POSTGREST_URL))
     return Response.json({error:'Database is not configured in this preview.'},{status:503});
@@ -341,10 +362,17 @@ route('POST', '/api/mattress-test-driver-job', async (request) => {
   if(phone.replace(/\D/g,'').length<10||!address||!zip)
     return Response.json({error:'Driver phone, pickup address and ZIP are required'},{status:400});
   const token=crypto.randomUUID();
+  const profiles=(await portableRuntime.db.list<any>('mattress-driver-profiles',{limit:100})).items;
+  const normalizedPhone=phone.replace(/\D/g,'');
+  const requestedProfileId=String(body.driverProfileId||'');
+  const profile=profiles.find((p:any)=>String(p.id||'')===requestedProfileId) ||
+    profiles.find((p:any)=>String(p.phone||'').replace(/\D/g,'')===normalizedPhone && p.contractorApproved===true);
   const record={
-    status:'offered',token,driverPhone:phone,driverName:String(body.driverName||'Test Driver'),
+    status:'offered',token,driverPhone:phone,driverName:String(profile?.name||body.driverName||'Test Driver'),
+    driverProfileId:String(profile?.id||''),
     item,count,address,zip,serviceDate,preferredTime,
     pickupPhotoPath:'',completionPhotoPath:'',
+    compensationAmount:0,compensationRecordedAt:'',
     createdAt:new Date().toISOString(),testMode:true
   };
   const [id]=await portableRuntime.db.add('mattress-driver-dispatches',[record]);
@@ -439,11 +467,54 @@ route('POST', '/api/mattress-driver-job/:token/complete', async (request,params)
     return Response.json({error:'Both pickup and completion photos are required'},{status:422});
   if(!['accepted','en-route','at-pickup'].includes(String(d.status||'')))
     return Response.json({error:'Job is not active'},{status:409});
+  let compensationAmount=Number(d.compensationAmount||0);
+  let compensationRecordedAt=String(d.compensationRecordedAt||'');
+  if(!compensationRecordedAt && d.driverProfileId){
+    const profiles=(await portableRuntime.db.list<any>('mattress-driver-profiles',{limit:100})).items;
+    const profile=profiles.find((p:any)=>String(p.id||'')===String(d.driverProfileId));
+    if(profile?.contractorApproved===true){
+      compensationAmount=Math.max(0,Number(profile.payPerJob||0));
+      compensationRecordedAt=new Date().toISOString();
+    }
+  }
   const record={...d,status:'completed',completedAt:new Date().toISOString(),
-    completionNotes:String(body.notes||'').slice(0,1000)};
+    completionNotes:String(body.notes||'').slice(0,1000),
+    compensationAmount,compensationRecordedAt};
   delete (record as any).id;
   await portableRuntime.db.update('mattress-driver-dispatches',[{id:d.id,record}]);
-  return Response.json({status:'completed',proofValidated:true,testMode:Boolean(d.testMode)});
+  return Response.json({
+    status:'completed',proofValidated:true,testMode:Boolean(d.testMode),
+    compensationRecorded:Boolean(compensationRecordedAt),
+    compensationAmount
+  });
+});
+
+route('GET', '/api/contractor-portal/:token', async (_request,params) => {
+  if(!(process.env.SUPABASE_URL||process.env.POSTGREST_URL))
+    return Response.json({error:'Database is not configured in this preview.'},{status:503});
+  const profiles=(await portableRuntime.db.list<any>('mattress-driver-profiles',{limit:100})).items;
+  const profile=profiles.find((p:any)=>String(p.portalToken||'')===params.token && p.contractorApproved===true);
+  if(!profile) return Response.json({error:'Contractor portal link is invalid'},{status:404});
+
+  const year=String(new Date().getFullYear());
+  const dispatches=(await portableRuntime.db.list<any>('mattress-driver-dispatches',{limit:500})).items
+    .filter((d:any)=>String(d.driverProfileId||'')===String(profile.id));
+  const jobs=dispatches.filter((d:any)=>String(d.status||'')==='completed' && String(d.completedAt||'').startsWith(year))
+    .map((d:any)=>({...d,compensationAmount:Number(d.compensationAmount||profile.payPerJob||0)}))
+    .sort((a:any,b:any)=>String(b.completedAt||'').localeCompare(String(a.completedAt||'')));
+
+  const payments=(await portableRuntime.db.list<any>('contractor-payments',{limit:500})).items
+    .filter((p:any)=>String(p.driverProfileId||'')===String(profile.id) && String(p.paidAt||'').startsWith(year))
+    .sort((a:any,b:any)=>String(b.paidAt||'').localeCompare(String(a.paidAt||'')));
+
+  const ytdEarned=jobs.reduce((n:number,j:any)=>n+Number(j.compensationAmount||0),0);
+  const ytdPaid=payments.reduce((n:number,p:any)=>n+Number(p.amount||0),0);
+  return Response.json({
+    profile:{id:profile.id,name:profile.name,payPerJob:Number(profile.payPerJob||0)},
+    summary:{ytdEarned,ytdPaid,owed:Math.max(0,ytdEarned-ytdPaid),completedJobs:jobs.length},
+    jobs,payments,
+    testMode:Boolean(profile.testMode)
+  });
 });
 
 export { handleRequest };
