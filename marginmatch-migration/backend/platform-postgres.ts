@@ -65,7 +65,7 @@ export const postgresDb = {
     )) as PostgrestRow[];
 
     return {
-      items: rows.map((row) => ({ id: row.id, ...(row.record as T) })),
+      items: rows.map((row) => ({ ...(row.record as T), id: row.id })),
     };
   },
 
