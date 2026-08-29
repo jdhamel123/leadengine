@@ -5,8 +5,8 @@ export default defineConfig({
     plugins: [react()],
     base: './',
     build: {
-        outDir: process.env.APPDEPLOY_VITE_OUT_DIR || 'dist',
-        sourcemap: process.env.APPDEPLOY_VITE_SOURCEMAP === 'hidden' ? 'hidden' : false,
+        outDir: process.env.VITE_OUT_DIR || 'dist',
+        sourcemap: process.env.VITE_SOURCEMAP === 'hidden' ? 'hidden' : false,
         rollupOptions: {
             maxParallelFileOps: 128,
         },
