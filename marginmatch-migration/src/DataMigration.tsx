@@ -28,8 +28,7 @@ export function DataMigration(){
       let imported=0;
       for(const [collection,rows] of entries){
         if(rows.length===0){
-          // Send an explicit marker through a zero-data session update is unnecessary;
-          // empty collections are counted locally and validated by hash reconciliation.
+          await api.post('/api/migration-import/'+id+'/batch',{collection,records:[]});
           continue;
         }
         for(let i=0;i<rows.length;i+=100){
