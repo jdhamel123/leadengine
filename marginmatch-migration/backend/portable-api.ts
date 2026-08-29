@@ -1,6 +1,8 @@
 import { route, handleRequest } from './http-portable';
 import { portableRuntime } from './portable-runtime';
 import { createMattressTestCheckout, getMattressTestConfirmation } from './stripe-test';
+import { sendMattressConfirmation } from './resend-portable';
+import { sendTestSms } from './twilio-portable';
 
 type MattressQuoteBody = {
   zip?: string;
@@ -285,11 +287,42 @@ route('POST', '/api/mattress-test-confirmation', async (request) => {
       paymentStatus:piStatus,
       captured:false
     };
-    return Response.json({receipt,testMode:true,liveFunds:false});
+
+    let emailSent=false;
+    let emailId='';
+    if(order?.email){
+      try{
+        const sent=await sendMattressConfirmation({
+          to:String(order.email),receiptNumber,amount:Number(receipt.amount||0),zip:String(receipt.zip||''),
+          serviceType:String(receipt.serviceType||''),preferredDate:String(receipt.preferredDate||''),preferredTime:String(receipt.preferredTime||'')
+        });
+        emailSent=Boolean(sent.id); emailId=sent.id;
+      }catch(error){
+        console.warn('Migration confirmation email skipped:',error instanceof Error?error.message:'unknown');
+      }
+    }
+
+    return Response.json({receipt,testMode:true,liveFunds:false,emailSent,emailId});
   }catch(error){
     const message=error instanceof Error?error.message:'Could not load booking confirmation';
     const status=message.includes('Valid Stripe test session')?400:502;
     return Response.json({error:message},{status});
+  }
+});
+
+route('POST', '/api/mattress-test-dispatch', async (request) => {
+  const body=await request.json() as Record<string,unknown>;
+  const phone=String(body.phone||'').trim();
+  const jobUrl=String(body.jobUrl||'').trim();
+  const serviceDate=String(body.serviceDate||'').trim();
+  const serviceTime=String(body.serviceTime||'').trim();
+  if(phone.replace(/\D/g,'').length<10||!jobUrl)
+    return Response.json({error:'Valid phone and job URL are required'},{status:400});
+  try{
+    const sent=await sendTestSms(phone,'Mattress Rescue TEST job offer: '+serviceDate+' '+serviceTime+'. Open job: '+jobUrl);
+    return Response.json({sent:true,sid:sent.sid,testMode:true});
+  }catch(error){
+    return Response.json({error:error instanceof Error?error.message:'SMS send failed',testMode:true},{status:423});
   }
 });
 
