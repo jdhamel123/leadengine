@@ -57,6 +57,56 @@ async function run(){
   assert.ok(token);
   const contractor={id:approved.driverProfileId,token};
 
+  // Add a second approved contractor in the same ZIP to prove first-accept-wins.
+  const application2=await data(await call('/api/contractor-applications',{
+    name:'Portable Backup Driver '+suffix,
+    email:'portable-backup-'+suffix+'@example.com',
+    phone:'508556'+suffix.slice(-4).padStart(4,'0'),
+    address:'2 Test Way',
+    city:'Foxborough',
+    state:'MA',
+    zip:'02035',
+    serviceZips:'02035',
+    vehicle:'Pickup truck',
+    availability:'Test availability',
+    experience:'Migration workflow test',
+    licenseConfirmed:true,
+    insuranceConfirmed:true,
+    backgroundConsent:true,
+    contractorAcknowledged:true
+  }));
+  const approved2=await data(await call('/api/contractor-applications/'+application2.id+'/approve',{payPerJob:50}));
+  assert.equal(approved2.approved,true);
+
+  const offerBatch=await data(await call('/api/mattress-test-dispatch-offers',{
+    orderRef:'portable-order-'+suffix,
+    address:'100 Main St',
+    zip:'02035',
+    item:'Mattress',
+    count:1,
+    serviceDate:'2026-09-01',
+    preferredTime:'09:00'
+  }));
+  assert.equal(offerBatch.matched,true);
+  assert.ok(offerBatch.offered>=2);
+
+  const primaryOffer=offerBatch.offers.find((o:any)=>String(o.driverProfileId)===String(contractor.id));
+  const backupOffer=offerBatch.offers.find((o:any)=>String(o.driverProfileId)===String(approved2.driverProfileId));
+  assert.ok(primaryOffer);
+  assert.ok(backupOffer);
+
+  const acceptedOffer=await data(await call('/api/mattress-driver-job/'+String(primaryOffer.jobUrl).split('#driver-job=')[1]+'/respond',{decision:'accept'}));
+  assert.equal(acceptedOffer.status,'accepted');
+
+  const secondAccept=await call('/api/mattress-driver-job/'+String(backupOffer.jobUrl).split('#driver-job=')[1]+'/respond',{decision:'accept'});
+  assert.equal(secondAccept.status,409);
+
+  const offerRows=(await portableRuntime.db.list<any>('mattress-driver-dispatches',{limit:500})).items
+    .filter((d:any)=>String(d.orderRef||'')==='portable-order-'+suffix);
+  assert.equal(offerRows.filter((d:any)=>d.status==='accepted').length,1);
+  assert.ok(offerRows.some((d:any)=>d.status==='superseded'));
+
+  // Continue lifecycle using a dedicated job for the primary contractor.
   const job=await data(await call('/api/mattress-test-driver-job',{
     driverProfileId:contractor.id,
     driverPhone:phone,
