@@ -160,6 +160,47 @@ async function run(){
   const resolved=(ex3.exceptions as any[]).find((x:any)=>String(x.exceptionKey||'')==='dispatch-no-accept:stale-order-'+suffix);
   assert.equal(resolved.status,'resolved');
 
+  // AI exception triage safety: no AI key -> deterministic fallback, no external side effects.
+  const oldAi=process.env.OPENAI_API_KEY;
+  delete process.env.OPENAI_API_KEY;
+
+  const gap=await call('/api/mattress-test-dispatch-offers',{
+    orderRef:'gap-order-'+suffix,
+    address:'300 Main St',
+    zip:'99999',
+    item:'Mattress',
+    count:1,
+    serviceDate:'2026-09-03',
+    preferredTime:'09:00'
+  });
+  assert.ok([400,422].includes(gap.status));
+
+  // Seed one explicit portable exception to evaluate.
+  await portableRuntime.db.add('order-exceptions',[{
+    exceptionKey:'ai-test:'+suffix,
+    type:'Pickup overdue',
+    orderRef:'ai-order-'+suffix,
+    severity:'high',
+    status:'open',
+    action:'Review delayed pickup',
+    note:'Synthetic integration exception',
+    autoAction:'Create internal follow-up',
+    createdAt:new Date().toISOString(),
+    updatedAt:new Date().toISOString(),
+    source:'portable-exception-engine'
+  }]);
+
+  const aiResult=await data(await call('/api/portable-exceptions/ai-resolve',{}));
+  assert.equal(aiResult.externalMessagingSent,false);
+  assert.equal(aiResult.moneyMoved,false);
+  assert.equal(aiResult.fulfillmentPromisesMade,false);
+  const aiDecision=(aiResult.decisions as any[]).find((d:any)=>String(d.exceptionKey||'')==='ai-test:'+suffix);
+  assert.ok(aiDecision);
+  assert.equal(aiDecision.aiDecision.canAutoResolve,false);
+
+  if(oldAi===undefined) delete process.env.OPENAI_API_KEY;
+  else process.env.OPENAI_API_KEY=oldAi;
+
   // Continue lifecycle using a dedicated job for the primary contractor.
   const job=await data(await call('/api/mattress-test-driver-job',{
     driverProfileId:contractor.id,
