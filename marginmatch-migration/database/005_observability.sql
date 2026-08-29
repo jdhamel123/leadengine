@@ -1,0 +1,5 @@
+-- Observability continues to use the compatibility record store.
+-- These comments document the logical collections:
+-- audit-events
+-- dead-letter-events
+-- system-health-events
