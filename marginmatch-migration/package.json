@@ -14,7 +14,9 @@
     "typecheck": "tsc -p tsconfig.portable.json",
     "migrate:import": "tsx scripts/import-snapshot.ts",
     "migrate:export": "tsx scripts/export-portable-snapshot.ts",
-    "migrate:reconcile": "tsx scripts/reconcile-snapshot.ts"
+    "migrate:reconcile": "tsx scripts/reconcile-snapshot.ts",
+    "ops:scan": "tsx scripts/run-exception-scan.ts",
+    "ops:health": "tsx scripts/healthcheck-deep.ts"
   },
   "dependencies": {
     "lucide-react": "^0.469.0",
