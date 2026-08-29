@@ -1255,6 +1255,15 @@ route('GET', '/api/migration-readiness', async (request) => {
   const infrastructureReady=blocking.filter(x=>!['email','sms','ai','auth'].includes(x)).length===0;
   const mattressRequired=['database-config','database-reachable','stripe-test','storage','public-url'];
   const mattressInfraReady=mattressRequired.every(id=>checks.find(x=>x.id===id)?.pass===true);
+  const legacyBackendEnabled=process.env.ENABLE_LEGACY_PORTABLE_ROUTES==='true';
+  const legacyFrontendEnabled=process.env.VITE_ENABLE_LEGACY_PORTFOLIO==='true';
+  const legacyParityApproved=process.env.LEGACY_PORTFOLIO_PARITY_APPROVED==='true';
+  const legacyCutoverReady=infrastructureReady&&legacyBackendEnabled&&legacyFrontendEnabled&&legacyParityApproved;
+  const legacyBlockers=[
+    ...(!legacyBackendEnabled?['legacy backend compatibility routes disabled']:[]),
+    ...(!legacyFrontendEnabled?['legacy portfolio frontend disabled']:[]),
+    ...(!legacyParityApproved?['legacy parity approval not recorded']:[])
+  ];
   const brands=[
     {
       brand:'Mattress Rescue',
@@ -1271,10 +1280,10 @@ route('GET', '/api/migration-readiness', async (request) => {
       domainCutoverReady:mattressInfraReady,
       blockers:mattressRequired.filter(id=>checks.find(x=>x.id===id)?.pass!==true)
     },
-    {brand:'Dumpster Hound',domain:'dumpsterhound.com',parity:'NOT YET MIGRATED',domainCutoverReady:false,blockers:['quote/order/supplier API parity']},
-    {brand:'Handled Stays',domain:'handledstays.com',parity:'NOT YET MIGRATED',domainCutoverReady:false,blockers:['property/reservation/vendor API parity']},
-    {brand:'Rack & Rivet',domain:'rackandrivet.com',parity:'NOT YET MIGRATED',domainCutoverReady:false,blockers:['catalog/supplier/order API parity']},
-    {brand:'MarginMatch Admin',domain:'marginmatch.net',parity:'PORTABLE OWNER CORE ONLY',domainCutoverReady:false,blockers:['legacy portfolio/admin API parity']}
+    {brand:'Dumpster Hound',domain:'dumpsterhound.com',parity:legacyCutoverReady?'PORTABLE COMPATIBILITY APPROVED':'COMPATIBILITY BUILT · VALIDATION LOCKED',domainCutoverReady:legacyCutoverReady,blockers:legacyBlockers},
+    {brand:'Handled Stays',domain:'handledstays.com',parity:legacyCutoverReady?'PORTABLE COMPATIBILITY APPROVED':'COMPATIBILITY BUILT · VALIDATION LOCKED',domainCutoverReady:legacyCutoverReady,blockers:legacyBlockers},
+    {brand:'Rack & Rivet',domain:'rackandrivet.com',parity:legacyCutoverReady?'PORTABLE COMPATIBILITY APPROVED':'COMPATIBILITY BUILT · VALIDATION LOCKED',domainCutoverReady:legacyCutoverReady,blockers:legacyBlockers},
+    {brand:'MarginMatch Admin',domain:'marginmatch.net',parity:legacyCutoverReady?'PORTABLE COMPATIBILITY APPROVED':'PORTABLE CORE + LEGACY SHIM · VALIDATION LOCKED',domainCutoverReady:legacyCutoverReady,blockers:legacyBlockers}
   ];
   return Response.json({
     checks,
@@ -1285,7 +1294,7 @@ route('GET', '/api/migration-readiness', async (request) => {
     productionPaymentsUnlocked:false,
     productionMessagingUnlocked:false,
     appDeployRequiredForMattressRescueRuntime:false,
-    appDeployRequiredForFullPortfolio:true,
+    appDeployRequiredForFullPortfolio:!legacyCutoverReady,
     blocking
   });
 });
