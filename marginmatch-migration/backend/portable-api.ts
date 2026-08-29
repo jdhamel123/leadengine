@@ -4,7 +4,7 @@ import { createMattressTestCheckout, getMattressTestConfirmation } from './strip
 import { sendMattressConfirmation } from './resend-portable';
 import { sendTestSms } from './twilio-portable';
 import { writeProof } from './storage-supabase';
-import { requireAdmin } from './auth-portable';
+import { requireAdmin, issueAdminSession, resolveUser } from './auth-portable';
 
 type MattressQuoteBody = {
   zip?: string;
@@ -42,6 +42,26 @@ function ownerHandledPrice(body: MattressQuoteBody) {
   }
   return customerPrice;
 }
+
+route('POST', '/api/auth/login', async (request) => {
+  const body=await request.json() as Record<string,unknown>;
+  const email=String(body.email||'').trim().toLowerCase();
+  const accessKey=String(body.accessKey||'');
+  const expected=process.env.PORTABLE_ADMIN_ACCESS_KEY||'';
+  const allowlist=String(process.env.ADMIN_EMAIL_ALLOWLIST||'').split(',').map(x=>x.trim().toLowerCase()).filter(Boolean);
+  if(!expected||!process.env.PORTABLE_SESSION_SECRET)
+    return Response.json({error:'Portable admin login is not configured'},{status:503});
+  if(!email||!allowlist.includes(email)||accessKey!==expected)
+    return Response.json({error:'Invalid admin credentials'},{status:401});
+  const token=await issueAdminSession(email);
+  return Response.json({token,email,expiresInSeconds:43200});
+});
+
+route('GET', '/api/auth/me', async (request) => {
+  const user=await resolveUser(request);
+  if(!user) return Response.json({error:'Unauthorized'},{status:401});
+  return Response.json({id:user.id,email:user.email||''});
+});
 
 route('GET', '/api/health', async () => {
   const checks: Record<string, unknown> = {
