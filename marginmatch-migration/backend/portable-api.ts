@@ -1264,15 +1264,15 @@ route('POST', '/api/migration-import/:id/batch', async (request,params) => {
   const body=await request.json() as Record<string,unknown>;
   const collection=String(body.collection||'');
   const records=Array.isArray(body.records)?body.records as Array<Record<string,unknown>>:[];
-  if(!collection||records.length===0||records.length>100)
-    return Response.json({error:'Collection and 1-100 records are required'},{status:400});
+  if(!collection||records.length>100)
+    return Response.json({error:'Collection and at most 100 records are required'},{status:400});
 
   const sessions=await portableRuntime.db.get<any>('migration-imports',[params.id]);
   const session=sessions[0];
   if(!session)return Response.json({error:'Migration import session not found'},{status:404});
   if(String(session.status||'')!=='running')return Response.json({error:'Migration import session is not active'},{status:409});
 
-  const imported=await (portableRuntime.db as any).importRecords(collection,records);
+  const imported=await portableRuntime.db.importRecords(collection,records);
   const importedCollections=Array.from(new Set([...(Array.isArray(session.importedCollections)?session.importedCollections:[]),collection]));
   const updated={...session,importedRecords:Number(session.importedRecords||0)+Number(imported||0),importedCollections,updatedAt:new Date().toISOString()};
   delete updated.id;
