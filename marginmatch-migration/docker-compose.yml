@@ -9,6 +9,7 @@ services:
     volumes:
       - marginmatch_db:/var/lib/postgresql/data
       - ./database/001_platform_records.sql:/docker-entrypoint-initdb.d/001_platform_records.sql:ro
+      - ./database/004_atomic_dispatch.sql:/docker-entrypoint-initdb.d/004_atomic_dispatch.sql:ro
     healthcheck:
       test: ["CMD-SHELL","pg_isready -U marginmatch -d marginmatch"]
       interval: 10s
