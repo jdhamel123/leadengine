@@ -1,0 +1,31 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "lib": ["ES2022", "DOM", "DOM.Iterable"],
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "jsx": "react-jsx",
+    "strict": true,
+    "skipLibCheck": true,
+    "noEmit": true,
+    "types": ["node"]
+  },
+  "include": [
+    "src/**/*.ts",
+    "src/**/*.tsx",
+    "server.ts",
+    "api/**/*.ts",
+    "backend/http-portable.ts",
+    "backend/portable-api.ts",
+    "backend/portable-runtime.ts",
+    "backend/platform-postgres.ts",
+    "backend/secrets-env.ts",
+    "backend/ai-openai.ts",
+    "backend/auth-portable.ts",
+    "backend/stripe-test.ts",
+    "backend/resend-portable.ts",
+    "backend/twilio-portable.ts",
+    "backend/storage-supabase.ts",
+    "tests/**/*.ts"
+  ]
+}
