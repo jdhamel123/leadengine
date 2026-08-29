@@ -24,14 +24,38 @@ async function run(){
   const suffix=Date.now().toString().slice(-6);
   const phone='508555'+suffix.slice(-4).padStart(4,'0');
 
-  const contractor=await data(await call('/api/mattress-test-contractor',{
+  // Exercise the actual contractor application onboarding flow.
+  const application=await data(await call('/api/contractor-applications',{
     name:'Portable Test Driver '+suffix,
+    email:'portable-driver-'+suffix+'@example.com',
     phone,
-    payPerJob:45,
-    serviceZips:['02035']
+    address:'1 Test Way',
+    city:'Foxborough',
+    state:'MA',
+    zip:'02035',
+    serviceZips:'02035 02766',
+    vehicle:'Pickup truck',
+    availability:'Test availability',
+    experience:'Migration workflow test',
+    licenseConfirmed:true,
+    insuranceConfirmed:true,
+    backgroundConsent:true,
+    contractorAcknowledged:true
   }));
-  assert.ok(contractor.id);
-  assert.ok(contractor.token);
+  assert.equal(application.status,'pending');
+  assert.ok(application.id);
+
+  const approved=await data(await call('/api/contractor-applications/'+application.id+'/approve',{
+    payPerJob:45
+  }));
+  assert.equal(approved.approved,true);
+  assert.equal(approved.moneyMoved,false);
+  assert.ok(approved.driverProfileId);
+  assert.ok(approved.portalUrl);
+
+  const token=String(approved.portalUrl).split('#contractor=')[1];
+  assert.ok(token);
+  const contractor={id:approved.driverProfileId,token};
 
   const job=await data(await call('/api/mattress-test-driver-job',{
     driverProfileId:contractor.id,
