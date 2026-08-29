@@ -1,0 +1,88 @@
+services:
+  db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: marginmatch
+      POSTGRES_USER: marginmatch
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD}
+    volumes:
+      - marginmatch_db:/var/lib/postgresql/data
+      - ./database/001_platform_records.sql:/docker-entrypoint-initdb.d/001_platform_records.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL","pg_isready -U marginmatch -d marginmatch"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  minio:
+    image: minio/minio:latest
+    restart: unless-stopped
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:?Set MINIO_ROOT_USER}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:?Set MINIO_ROOT_PASSWORD}
+    volumes:
+      - marginmatch_objects:/data
+
+  minio-init:
+    image: minio/mc:latest
+    depends_on:
+      - minio
+    entrypoint: >
+      /bin/sh -c "
+      until mc alias set local http://minio:9000 \"$${MINIO_ROOT_USER}\" \"$${MINIO_ROOT_PASSWORD}\"; do sleep 2; done;
+      mc mb --ignore-existing local/marginmatch-proof;
+      mc anonymous set none local/marginmatch-proof;
+      exit 0;
+      "
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:?Set MINIO_ROOT_USER}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:?Set MINIO_ROOT_PASSWORD}
+
+  app:
+    build: .
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+      minio-init:
+        condition: service_completed_successfully
+    ports:
+      - "3000:3000"
+    environment:
+      PORT: 3000
+      DATABASE_URL: postgres://marginmatch:${POSTGRES_PASSWORD}@db:5432/marginmatch
+      DATABASE_SSL: "false"
+      S3_ENDPOINT: http://minio:9000
+      S3_REGION: us-east-1
+      S3_BUCKET: marginmatch-proof
+      S3_FORCE_PATH_STYLE: "true"
+      S3_ACCESS_KEY_ID: ${MINIO_ROOT_USER}
+      S3_SECRET_ACCESS_KEY: ${MINIO_ROOT_PASSWORD}
+      PORTABLE_PUBLIC_URL: ${PORTABLE_PUBLIC_URL:-http://localhost:3000}
+      PORTABLE_ADMIN_ACCESS_KEY: ${PORTABLE_ADMIN_ACCESS_KEY:?Set PORTABLE_ADMIN_ACCESS_KEY}
+      PORTABLE_SESSION_SECRET: ${PORTABLE_SESSION_SECRET:?Set PORTABLE_SESSION_SECRET}
+      ADMIN_EMAIL_ALLOWLIST: ${ADMIN_EMAIL_ALLOWLIST:?Set ADMIN_EMAIL_ALLOWLIST}
+      STRIPE_RESTRICTED_KEY: ${STRIPE_RESTRICTED_KEY:-}
+      RESEND_API_KEY: ${RESEND_API_KEY:-}
+      TWILIO_ACCOUNT_SID: ${TWILIO_ACCOUNT_SID:-}
+      TWILIO_AUTH_TOKEN: ${TWILIO_AUTH_TOKEN:-}
+      TWILIO_FROM_NUMBER: ${TWILIO_FROM_NUMBER:-}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      ENABLE_OUTBOUND_TEST_EMAILS: "false"
+      ENABLE_OUTBOUND_TEST_SMS: "false"
+      ENABLE_LEGACY_PORTABLE_ROUTES: "false"
+      ENABLE_LEGACY_EXTERNAL_MESSAGING: "false"
+      ENABLE_LEGACY_LIVE_PAYMENTS: "false"
+      VITE_ENABLE_LEGACY_PORTFOLIO: "false"
+      LEGACY_PORTFOLIO_PARITY_APPROVED: "false"
+    healthcheck:
+      test: ["CMD-SHELL","wget -qO- http://127.0.0.1:3000/api/health >/dev/null || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 10
+
+volumes:
+  marginmatch_db:
+  marginmatch_objects:
