@@ -489,6 +489,91 @@ route('POST', '/api/mattress-driver-job/:token/complete', async (request,params)
   });
 });
 
+route('POST', '/api/contractor-applications', async (request) => {
+  if(!(process.env.SUPABASE_URL||process.env.POSTGREST_URL))
+    return Response.json({error:'Database is not configured in this preview.'},{status:503});
+
+  const body=await request.json() as Record<string,unknown>;
+  const name=String(body.name||'').trim();
+  const email=String(body.email||'').trim().toLowerCase();
+  const phone=String(body.phone||'').trim();
+  const zip=String(body.zip||'').trim();
+  const acknowledgments=[
+    Boolean(body.licenseConfirmed),
+    Boolean(body.insuranceConfirmed),
+    Boolean(body.backgroundConsent),
+    Boolean(body.contractorAcknowledged)
+  ];
+
+  if(!name||!email.includes('@')||phone.replace(/\D/g,'').length<10||!/^[0-9]{5}$/.test(zip))
+    return Response.json({error:'Valid name, email, mobile phone and ZIP are required'},{status:400});
+  if(acknowledgments.some(v=>!v))
+    return Response.json({error:'All required acknowledgments must be confirmed'},{status:422});
+
+  const existing=(await portableRuntime.db.list<any>('contractor-applications',{limit:200})).items;
+  if(existing.some((a:any)=>['pending','approved'].includes(String(a.status||'')) &&
+    (String(a.email||'').toLowerCase()===email || String(a.phone||'').replace(/\D/g,'')===phone.replace(/\D/g,''))))
+    return Response.json({error:'An active contractor application already exists for this contact'},{status:409});
+
+  const serviceZips=String(body.serviceZips||'').split(/[^0-9]+/).filter((z)=>/^[0-9]{5}$/.test(z));
+  const applicationNumber='MRD-'+Date.now().toString().slice(-8);
+  const record={
+    applicationNumber,name,email,phone,address:String(body.address||'').trim().slice(0,180),
+    city:String(body.city||'').trim().slice(0,80),state:String(body.state||'MA').trim().slice(0,2).toUpperCase(),zip,
+    serviceZips,vehicle:String(body.vehicle||'').trim().slice(0,80),
+    availability:String(body.availability||'').trim().slice(0,300),
+    experience:String(body.experience||'').trim().slice(0,1500),
+    licenseConfirmed:true,insuranceConfirmed:true,backgroundConsent:true,contractorAcknowledged:true,
+    status:'pending',createdAt:new Date().toISOString(),testMode:true
+  };
+  const [id]=await portableRuntime.db.add('contractor-applications',[record]);
+  if(!id) return Response.json({error:'Could not save contractor application'},{status:500});
+  return Response.json({id,applicationNumber,status:'pending'},{status:201});
+});
+
+route('POST', '/api/contractor-applications/:id/approve', async (request,params) => {
+  if(!(process.env.SUPABASE_URL||process.env.POSTGREST_URL))
+    return Response.json({error:'Database is not configured in this preview.'},{status:503});
+
+  const body=await request.json() as Record<string,unknown>;
+  const payPerJob=Math.round(Number(body.payPerJob||0)*100)/100;
+  if(payPerJob<=0) return Response.json({error:'Approved pay per job must be positive'},{status:400});
+
+  const apps=(await portableRuntime.db.list<any>('contractor-applications',{limit:200})).items;
+  const app=apps.find((a:any)=>String(a.id||'')===params.id);
+  if(!app) return Response.json({error:'Contractor application not found'},{status:404});
+  if(String(app.status||'')!=='pending')
+    return Response.json({error:'Only pending applications can be approved'},{status:409});
+
+  const token=crypto.randomUUID();
+  const profile={
+    name:app.name,email:app.email,phone:app.phone,payPerJob,portalToken:token,
+    contractorApproved:true,status:'approved',serviceZips:Array.isArray(app.serviceZips)?app.serviceZips:[],
+    vehicle:app.vehicle||'',sourceApplicationId:app.id,approvedAt:new Date().toISOString(),
+    createdAt:new Date().toISOString(),testMode:true
+  };
+  const [profileId]=await portableRuntime.db.add('mattress-driver-profiles',[profile]);
+  if(!profileId) return Response.json({error:'Could not create contractor profile'},{status:500});
+
+  const updated={...app,status:'approved',approvedAt:new Date().toISOString(),driverProfileId:profileId,payPerJob};
+  delete (updated as any).id;
+  await portableRuntime.db.update('contractor-applications',[{id:app.id,record:updated}]);
+
+  const portalUrl=(process.env.PORTABLE_PUBLIC_URL||'http://localhost:3000')+'/#contractor='+token;
+  let smsSent=false;
+  try{
+    const sms=await sendTestSms(String(app.phone||''),'Mattress Rescue TEST contractor approval. Portal: '+portalUrl);
+    smsSent=Boolean(sms.sid);
+  }catch(error){
+    console.warn('Migration contractor approval SMS skipped:',error instanceof Error?error.message:'unknown');
+  }
+
+  return Response.json({
+    approved:true,driverProfileId:profileId,portalUrl,smsSent,
+    moneyMoved:false,testMode:true
+  },{status:201});
+});
+
 route('GET', '/api/contractor-admin', async () => {
   if(!(process.env.SUPABASE_URL||process.env.POSTGREST_URL))
     return Response.json({error:'Database is not configured in this preview.'},{status:503});
