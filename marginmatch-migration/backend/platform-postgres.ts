@@ -107,6 +107,46 @@ export const postgresDb={
     return results;
   },
 
+  async importRecords(collection:string,records:Array<RecordValue&{id?:string}>):Promise<number>{
+    if(!records.length)return 0;
+    const p=directPool();
+    if(p){
+      const client=await p.connect();
+      try{
+        await client.query('begin');
+        let imported=0;
+        for(const source of records){
+          const {id,...record}=source;
+          if(id&&/^[0-9a-f-]{36}$/i.test(id)){
+            await client.query(
+              'insert into platform_records(collection,id,record) values($1,$2::uuid,$3::jsonb) on conflict(collection,id) do update set record=excluded.record,updated_at=now()',
+              [collection,id,JSON.stringify(record)]
+            );
+          }else{
+            await client.query('insert into platform_records(collection,record) values($1,$2::jsonb)',[collection,JSON.stringify(record)]);
+          }
+          imported++;
+        }
+        await client.query('commit');
+        return imported;
+      }catch(error){
+        await client.query('rollback');
+        throw error;
+      }finally{client.release();}
+    }
+
+    const payload=records.map(source=>{
+      const {id,...record}=source;
+      return id&&/^[0-9a-f-]{36}$/i.test(id)?{collection,id,record}:{collection,record};
+    });
+    const rows=(await restRequest('/rest/v1/platform_records',{
+      method:'POST',
+      headers:{Prefer:'resolution=merge-duplicates,return=representation'},
+      body:JSON.stringify(payload)
+    })) as PostgrestRow[];
+    return rows.length;
+  },
+
   async delete(collection:string,ids:string[]):Promise<boolean[]>{
     const p=directPool();
     const results:boolean[]=[];
