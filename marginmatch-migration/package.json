@@ -18,7 +18,8 @@
     "ops:scan": "tsx scripts/run-exception-scan.ts",
     "ops:health": "tsx scripts/healthcheck-deep.ts",
     "ops:maintenance": "tsx scripts/maintenance.ts",
-    "release:metadata": "tsx scripts/release-metadata.ts"
+    "release:metadata": "tsx scripts/release-metadata.ts",
+    "profit-factory:seed": "tsx scripts/seed-profit-factory.ts"
   },
   "dependencies": {
     "lucide-react": "^0.469.0",
