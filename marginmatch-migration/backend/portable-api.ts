@@ -1097,6 +1097,45 @@ route('GET', '/api/contractor-portal/:token', async (_request,params) => {
   });
 });
 
+route('GET', '/api/system-health', async (request) => {
+  await requirePortableAdmin(request);
+  if(!databaseConfigured())return Response.json({error:'Database is not configured'},{status:503});
+  const [dead,auditEvents,exceptions]=await Promise.all([
+    portableRuntime.db.list<any>('dead-letter-events',{limit:300}),
+    portableRuntime.db.list<any>('audit-events',{limit:300}),
+    portableRuntime.db.list<any>('order-exceptions',{limit:300})
+  ]);
+  const openDead=dead.items.filter((x:any)=>String(x.status||'open')==='open');
+  const now=Date.now();
+  const byKind=Object.values(openDead.reduce((m:any,x:any)=>{
+    const k=String(x.kind||'unknown');m[k]=m[k]||{kind:k,count:0,oldestAgeMinutes:0};
+    m[k].count++;const age=Math.max(0,Math.round((now-new Date(String(x.createdAt||now)).getTime())/60000));
+    m[k].oldestAgeMinutes=Math.max(m[k].oldestAgeMinutes,age);return m;
+  },{}));
+  return Response.json({
+    summary:{
+      openDeadLetters:openDead.length,
+      highExceptions:exceptions.items.filter((x:any)=>String(x.status||'')!=='resolved'&&String(x.severity||'')==='high').length,
+      recentErrors:auditEvents.items.filter((x:any)=>String(x.status||'')==='error').length
+    },
+    deadLetters:openDead.sort((a:any,b:any)=>String(b.createdAt||'').localeCompare(String(a.createdAt||''))).slice(0,100),
+    byKind,
+    recentAudit:auditEvents.items.sort((a:any,b:any)=>String(b.createdAt||'').localeCompare(String(a.createdAt||''))).slice(0,50),
+    runtime:'portable'
+  });
+});
+
+route('POST', '/api/dead-letter/:id/resolve', async (request,params) => {
+  await requirePortableAdmin(request);
+  const [row]=await portableRuntime.db.get<any>('dead-letter-events',[params.id]);
+  if(!row)return Response.json({error:'Dead-letter event not found'},{status:404});
+  const body=await request.json() as Record<string,unknown>;
+  const updated={...row,status:'resolved',resolution:String(body.resolution||'Owner resolved').slice(0,1000),resolvedAt:new Date().toISOString()};
+  delete updated.id;
+  await portableRuntime.db.update('dead-letter-events',[{id:params.id,record:updated}]);
+  return Response.json({resolved:true,id:params.id});
+});
+
 route('GET', '/api/portable-operations', async (request) => {
   await requirePortableAdmin(request);
   if(!databaseConfigured())
