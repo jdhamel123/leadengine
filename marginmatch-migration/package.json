@@ -10,7 +10,8 @@
     "vercel-build": "vite build",
     "start": "tsx server.ts",
     "test": "NODE_ENV=test tsx tests/portable-api.test.ts",
-    "test:workflow": "NODE_ENV=test tsx tests/portable-workflow.test.ts"
+    "test:workflow": "NODE_ENV=test tsx tests/portable-workflow.test.ts",
+    "typecheck": "tsc -p tsconfig.portable.json"
   },
   "dependencies": {
     "lucide-react": "^0.469.0",
