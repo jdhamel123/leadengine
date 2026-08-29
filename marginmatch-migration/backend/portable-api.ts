@@ -1108,6 +1108,56 @@ route('GET', '/api/contractor-portal/:token', async (_request,params) => {
   });
 });
 
+route('POST', '/api/profit-factory/experiment', async (request) => {
+  const admin=await requirePortableAdmin(request);
+  const body=await request.json() as Record<string,unknown>;
+  const name=String(body.name||'').trim(),model=String(body.model||'').trim();
+  if(!name||!model)return Response.json({error:'Name and model are required'},{status:400});
+  const [id]=await portableRuntime.db.add('profit-factory-experiments',[{
+    name,model,vertical:String(body.vertical||'general'),status:'idea',
+    maxTestSpend:Math.max(0,Number(body.maxTestSpend||0)),
+    collectedRevenue:0,refunds:0,paymentFees:0,apiCost:0,messagingCost:0,
+    advertisingCost:0,fulfillmentCost:0,infrastructureVariableCost:0,
+    humanExceptionMinutes:0,automationRate:100,
+    createdBy:admin.email,createdAt:new Date().toISOString()
+  }]);
+  return Response.json({id,status:'idea'},{status:201});
+});
+
+route('POST', '/api/profit-factory/experiment/:id/metrics', async (request,params) => {
+  await requirePortableAdmin(request);
+  const [x]=await portableRuntime.db.get<any>('profit-factory-experiments',[params.id]);
+  if(!x)return Response.json({error:'Experiment not found'},{status:404});
+  const b=await request.json() as Record<string,unknown>;
+  const numeric=['collectedRevenue','refunds','paymentFees','apiCost','messagingCost','advertisingCost','fulfillmentCost','infrastructureVariableCost','humanExceptionMinutes','automationRate'];
+  const record={...x,updatedAt:new Date().toISOString()};
+  for(const k of numeric)if(b[k]!==undefined)(record as any)[k]=Math.max(0,Number(b[k]||0));
+  const profit=Number(record.collectedRevenue||0)-Number(record.refunds||0)-Number(record.paymentFees||0)-Number(record.apiCost||0)-Number(record.messagingCost||0)-Number(record.advertisingCost||0)-Number(record.fulfillmentCost||0)-Number(record.infrastructureVariableCost||0);
+  record.contributionProfit=profit;
+  record.recommendation=profit>0?(Number(record.automationRate||0)>=90?'scale':'keep-tiny'):Number(record.collectedRevenue||0)>0?'improve':'test';
+  delete record.id;
+  await portableRuntime.db.update('profit-factory-experiments',[{id:params.id,record}]);
+  return Response.json({id:params.id,contributionProfit:profit,recommendation:record.recommendation});
+});
+
+route('GET', '/api/profit-factory/portfolio', async (request) => {
+  await requirePortableAdmin(request);
+  const rows=(await portableRuntime.db.list<any>('profit-factory-experiments',{limit:1000})).items;
+  const enriched=rows.map((x:any)=>{
+    const profit=Number(x.collectedRevenue||0)-Number(x.refunds||0)-Number(x.paymentFees||0)-Number(x.apiCost||0)-Number(x.messagingCost||0)-Number(x.advertisingCost||0)-Number(x.fulfillmentCost||0)-Number(x.infrastructureVariableCost||0);
+    return {...x,contributionProfit:profit};
+  });
+  return Response.json({
+    experiments:enriched,
+    totals:{
+      revenue:enriched.reduce((n:number,x:any)=>n+Number(x.collectedRevenue||0),0),
+      contributionProfit:enriched.reduce((n:number,x:any)=>n+Number(x.contributionProfit||0),0),
+      profitable:enriched.filter((x:any)=>Number(x.contributionProfit||0)>0).length,
+      losing:enriched.filter((x:any)=>Number(x.contributionProfit||0)<0).length
+    }
+  });
+});
+
 route('POST', '/api/revenue-lab/lead', async (request) => {
   if(!databaseConfigured())return Response.json({error:'Database is not configured'},{status:503});
   const body=await request.json() as Record<string,unknown>;
