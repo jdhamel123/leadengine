@@ -70,6 +70,17 @@ route('GET', '/api/auth/me', async (request) => {
   return Response.json({id:user.id,email:user.email||''});
 });
 
+route('GET', '/api/release', async () => {
+  return Response.json({
+    version:process.env.RELEASE_VERSION||'dev',
+    commit:process.env.GIT_COMMIT||process.env.GITHUB_SHA||'unknown',
+    runtime:'portable',
+    legacyTrafficEnabled:process.env.ENABLE_LEGACY_PORTABLE_ROUTES==='true',
+    productionPaymentsUnlocked:false,
+    productionMessagingUnlocked:false
+  });
+});
+
 route('GET', '/api/health', async () => {
   const checks: Record<string, unknown> = {
     runtime: 'portable',
