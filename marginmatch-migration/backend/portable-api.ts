@@ -1230,13 +1230,40 @@ route('GET', '/api/migration-readiness', async (request) => {
     {id:'public-url',label:'Portable public URL configured',pass:Boolean(process.env.PORTABLE_PUBLIC_URL)}
   ];
   const blocking=checks.filter(x=>!x.pass).map(x=>x.id);
+  const infrastructureReady=blocking.filter(x=>!['email','sms','ai','auth'].includes(x)).length===0;
+  const mattressRequired=['database-config','database-reachable','stripe-test','storage','public-url'];
+  const mattressInfraReady=mattressRequired.every(id=>checks.find(x=>x.id===id)?.pass===true);
+  const brands=[
+    {
+      brand:'Mattress Rescue',
+      domain:'mattressrescue.com',
+      parity:'MIGRATED',
+      customerFlow:true,
+      paymentsTestMode:true,
+      dispatch:true,
+      contractorOnboarding:true,
+      payrollLedger:true,
+      proofStorage:true,
+      exceptions:true,
+      admin:true,
+      domainCutoverReady:mattressInfraReady,
+      blockers:mattressRequired.filter(id=>checks.find(x=>x.id===id)?.pass!==true)
+    },
+    {brand:'Dumpster Hound',domain:'dumpsterhound.com',parity:'NOT YET MIGRATED',domainCutoverReady:false,blockers:['quote/order/supplier API parity']},
+    {brand:'Handled Stays',domain:'handledstays.com',parity:'NOT YET MIGRATED',domainCutoverReady:false,blockers:['property/reservation/vendor API parity']},
+    {brand:'Rack & Rivet',domain:'rackandrivet.com',parity:'NOT YET MIGRATED',domainCutoverReady:false,blockers:['catalog/supplier/order API parity']},
+    {brand:'MarginMatch Admin',domain:'marginmatch.net',parity:'PORTABLE OWNER CORE ONLY',domainCutoverReady:false,blockers:['legacy portfolio/admin API parity']}
+  ];
   return Response.json({
     checks,
-    readyForIndependentPreview:blocking.filter(x=>!['email','sms','ai','auth'].includes(x)).length===0,
-    readyForDomainCutover:blocking.length===0,
+    brands,
+    readyForIndependentPreview:infrastructureReady,
+    mattressRescueCutoverReady:mattressInfraReady,
+    readyForPortfolioDomainCutover:brands.every((b:any)=>b.domainCutoverReady),
     productionPaymentsUnlocked:false,
     productionMessagingUnlocked:false,
-    appDeployRequiredForPortableRuntime:false,
+    appDeployRequiredForMattressRescueRuntime:false,
+    appDeployRequiredForFullPortfolio:true,
     blocking
   });
 });
