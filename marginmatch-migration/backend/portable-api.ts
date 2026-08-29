@@ -412,6 +412,99 @@ async function resolvePortableException(key:string,resolution:string){
   return true;
 }
 
+async function aiResolvePortableException(exception:any) {
+  const safeFallback={
+    classification:String(exception.type||'Operational exception'),
+    priority:String(exception.severity||'medium'),
+    recommendedAction:String(exception.action||'Review exception'),
+    canAutoResolve:false,
+    autoAction:'',
+    customerMessageDraft:'',
+    driverMessageDraft:'',
+    rationale:'Fallback rule used because AI resolution was unavailable.'
+  };
+
+  if(!process.env.OPENAI_API_KEY) return safeFallback;
+
+  try{
+    const result=await portableRuntime.ai.run({
+      system:[
+        'You are the MarginMatch exception triage agent.',
+        'You may classify and recommend actions for Mattress Rescue test-mode operations.',
+        'Never authorize or move money, capture payments, issue refunds, change contractor pay, contact non-allowlisted recipients, make legal/tax decisions, or promise fulfillment.',
+        'Auto-resolution is allowed only for internal state changes such as rerunning approved ZIP matching, rechecking status, resolving stale duplicate exceptions, or creating an internal follow-up.',
+        'Return JSON with keys: classification, priority, recommendedAction, canAutoResolve, autoAction, customerMessageDraft, driverMessageDraft, rationale.'
+      ].join(' '),
+      prompt:JSON.stringify({
+        type:exception.type,
+        severity:exception.severity,
+        action:exception.action,
+        note:exception.note,
+        autoAction:exception.autoAction,
+        orderRef:exception.orderRef,
+        dispatchId:exception.dispatchId,
+        migrationMode:true
+      }),
+      maxTokens:500
+    });
+    const data=(result.data||{}) as Record<string,unknown>;
+    return {
+      classification:String(data.classification||safeFallback.classification),
+      priority:['low','medium','high'].includes(String(data.priority||''))?String(data.priority):safeFallback.priority,
+      recommendedAction:String(data.recommendedAction||safeFallback.recommendedAction).slice(0,800),
+      canAutoResolve:Boolean(data.canAutoResolve),
+      autoAction:String(data.autoAction||'').slice(0,300),
+      customerMessageDraft:String(data.customerMessageDraft||'').slice(0,1200),
+      driverMessageDraft:String(data.driverMessageDraft||'').slice(0,1200),
+      rationale:String(data.rationale||'').slice(0,1200)
+    };
+  }catch(error){
+    console.warn('AI exception resolver unavailable:',error instanceof Error?error.message:'unknown');
+    return safeFallback;
+  }
+}
+
+async function executeSafeExceptionAction(exception:any,decision:any){
+  const action=String(decision.autoAction||'').toLowerCase();
+  if(!decision.canAutoResolve) return {executed:false,reason:'ai-did-not-authorize-safe-auto-action'};
+
+  if(action.includes('rerun') && action.includes('zip') && exception.orderRef){
+    const dispatches=(await portableRuntime.db.list<any>('mattress-driver-dispatches',{limit:500})).items
+      .filter((d:any)=>String(d.orderRef||'')===String(exception.orderRef||''));
+    const seed=dispatches[0];
+    if(!seed) return {executed:false,reason:'no-dispatch-context'};
+    const result=await createDispatchOffers({
+      orderRef:String(exception.orderRef),
+      zip:String(seed.zip||''),
+      address:String(seed.address||''),
+      item:String(seed.item||'Mattress'),
+      count:Math.max(1,Number(seed.count||1)),
+      serviceDate:String(seed.serviceDate||''),
+      preferredTime:String(seed.preferredTime||'')
+    });
+    return {executed:true,kind:'rerun-zip-matching',result};
+  }
+
+  if(action.includes('follow-up') || action.includes('internal followup') || action.includes('internal follow-up')){
+    const [id]=await portableRuntime.db.add('ops-followups',[{
+      title:'AI exception follow-up',
+      company:String(exception.orderRef||'Mattress Rescue order'),
+      note:String(decision.recommendedAction||exception.action||'Review exception'),
+      dueAt:new Date().toISOString().slice(0,10),
+      status:'open',
+      priority:String(exception.severity||'medium')==='high'?'High':'Normal',
+      vertical:'Mattress Rescue',
+      orderId:String(exception.orderRef||''),
+      exceptionKey:String(exception.exceptionKey||''),
+      createdAt:new Date().toISOString(),
+      source:'portable-ai-exception-resolver'
+    }]);
+    return {executed:Boolean(id),kind:'create-internal-follow-up',id};
+  }
+
+  return {executed:false,reason:'requested-action-not-on-safe-allowlist'};
+}
+
 async function scanPortableExceptions() {
   if(!(process.env.SUPABASE_URL||process.env.POSTGREST_URL))
     return {scanned:false,created:[],resolved:[],reason:'database-not-configured'};
@@ -908,6 +1001,33 @@ route('GET', '/api/contractor-portal/:token', async (_request,params) => {
 route('POST', '/api/portable-exceptions/scan', async () => {
   const result=await scanPortableExceptions();
   return Response.json(result);
+});
+
+route('POST', '/api/portable-exceptions/ai-resolve', async () => {
+  if(!(process.env.SUPABASE_URL||process.env.POSTGREST_URL))
+    return Response.json({resolved:0,decisions:[],databaseConfigured:false});
+
+  const rows=(await portableRuntime.db.list<any>('order-exceptions',{limit:500})).items
+    .filter((x:any)=>String(x.source||'')==='portable-exception-engine' && String(x.status||'')!=='resolved')
+    .sort((a:any,b:any)=>String(b.severity||'').localeCompare(String(a.severity||''))||String(a.createdAt||'').localeCompare(String(b.createdAt||'')));
+
+  const decisions:any[]=[];
+  for(const exception of rows.slice(0,25)){
+    const aiDecision=await aiResolvePortableException(exception);
+    const execution=await executeSafeExceptionAction(exception,aiDecision);
+    const record={...exception,aiDecision,aiEvaluatedAt:new Date().toISOString(),aiExecution:execution};
+    delete record.id;
+    await portableRuntime.db.update('order-exceptions',[{id:exception.id,record}]);
+    decisions.push({exceptionId:exception.id,exceptionKey:exception.exceptionKey,aiDecision,execution});
+  }
+
+  return Response.json({
+    resolved:decisions.filter((d:any)=>d.execution?.executed).length,
+    decisions,
+    externalMessagingSent:false,
+    moneyMoved:false,
+    fulfillmentPromisesMade:false
+  });
 });
 
 route('GET', '/api/portable-exceptions', async () => {
