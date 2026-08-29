@@ -1235,6 +1235,78 @@ route('GET', '/api/self-test', async (request) => {
   return Response.json({pass,checks,runtime:'portable',appDeployDependency:false});
 });
 
+route('POST', '/api/migration-import/start', async (request) => {
+  await requirePortableAdmin(request);
+  if(!databaseConfigured())return Response.json({error:'Database is not configured'},{status:503});
+  const body=await request.json() as Record<string,unknown>;
+  const expectedCollections=Math.max(0,Math.floor(Number(body.expectedCollections)||0));
+  const expectedRecords=Math.max(0,Math.floor(Number(body.expectedRecords)||0));
+  const snapshotExportedAt=String(body.snapshotExportedAt||'');
+  if(expectedCollections<=0)return Response.json({error:'Snapshot collection count is required'},{status:400});
+  const [id]=await portableRuntime.db.add('migration-imports',[{
+    source:String(body.source||'AppDeploy MarginMatch'),
+    snapshotExportedAt,
+    expectedCollections,
+    expectedRecords,
+    importedRecords:0,
+    importedCollections:[],
+    status:'running',
+    startedAt:new Date().toISOString(),
+    testMode:true
+  }]);
+  if(!id)return Response.json({error:'Could not start migration import'},{status:500});
+  return Response.json({id,status:'running'},{status:201});
+});
+
+route('POST', '/api/migration-import/:id/batch', async (request,params) => {
+  await requirePortableAdmin(request);
+  if(!databaseConfigured())return Response.json({error:'Database is not configured'},{status:503});
+  const body=await request.json() as Record<string,unknown>;
+  const collection=String(body.collection||'');
+  const records=Array.isArray(body.records)?body.records as Array<Record<string,unknown>>:[];
+  if(!collection||records.length===0||records.length>100)
+    return Response.json({error:'Collection and 1-100 records are required'},{status:400});
+
+  const sessions=await portableRuntime.db.get<any>('migration-imports',[params.id]);
+  const session=sessions[0];
+  if(!session)return Response.json({error:'Migration import session not found'},{status:404});
+  if(String(session.status||'')!=='running')return Response.json({error:'Migration import session is not active'},{status:409});
+
+  const imported=await (portableRuntime.db as any).importRecords(collection,records);
+  const importedCollections=Array.from(new Set([...(Array.isArray(session.importedCollections)?session.importedCollections:[]),collection]));
+  const updated={...session,importedRecords:Number(session.importedRecords||0)+Number(imported||0),importedCollections,updatedAt:new Date().toISOString()};
+  delete updated.id;
+  await portableRuntime.db.update('migration-imports',[{id:params.id,record:updated}]);
+  return Response.json({imported,collection,totalImported:updated.importedRecords});
+});
+
+route('POST', '/api/migration-import/:id/complete', async (request,params) => {
+  await requirePortableAdmin(request);
+  const [session]=await portableRuntime.db.get<any>('migration-imports',[params.id]);
+  if(!session)return Response.json({error:'Migration import session not found'},{status:404});
+  const expectedRecords=Number(session.expectedRecords||0);
+  const importedRecords=Number(session.importedRecords||0);
+  const expectedCollections=Number(session.expectedCollections||0);
+  const importedCollections=Array.isArray(session.importedCollections)?session.importedCollections.length:0;
+  const pass=(expectedRecords===0||importedRecords===expectedRecords)&&importedCollections===expectedCollections;
+  const updated={...session,status:pass?'completed':'reconcile-required',completedAt:new Date().toISOString(),countCheckPassed:pass};
+  delete updated.id;
+  await portableRuntime.db.update('migration-imports',[{id:params.id,record:updated}]);
+  return Response.json({
+    status:updated.status,
+    expectedRecords,importedRecords,expectedCollections,importedCollections,
+    countCheckPassed:pass,
+    nextStep:pass?'Run CLI hash reconciliation before cutover':'Investigate count mismatch before cutover'
+  });
+});
+
+route('GET', '/api/migration-import/:id', async (request,params) => {
+  await requirePortableAdmin(request);
+  const [session]=await portableRuntime.db.get<any>('migration-imports',[params.id]);
+  if(!session)return Response.json({error:'Migration import session not found'},{status:404});
+  return Response.json({session});
+});
+
 route('GET', '/api/migration-readiness', async (request) => {
   await requirePortableAdmin(request);
   const dbConfigured=databaseConfigured();
