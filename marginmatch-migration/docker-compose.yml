@@ -42,10 +42,13 @@ services:
       MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:?Set MINIO_ROOT_PASSWORD}
 
   app:
+    image: ${APP_IMAGE:-marginmatch-portable:local}
     build:
       context: .
       args:
         VITE_ENABLE_LEGACY_PORTFOLIO: ${VITE_ENABLE_LEGACY_PORTFOLIO:-false}
+        RELEASE_VERSION: ${RELEASE_VERSION:-local}
+        GIT_COMMIT: ${GIT_COMMIT:-unknown}
     restart: unless-stopped
     depends_on:
       db:
