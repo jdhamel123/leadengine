@@ -6,8 +6,10 @@
  */
 import { postgresDb } from './platform-postgres';
 import { envSecrets } from './secrets-env';
+import { openAiAdapter } from './ai-openai';
 
 export const portableRuntime = {
   db: postgresDb,
   secrets: envSecrets,
+  ai: openAiAdapter,
 };
