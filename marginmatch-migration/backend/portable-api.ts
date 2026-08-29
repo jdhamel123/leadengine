@@ -402,6 +402,55 @@ route('POST', '/api/mattress-test-dispatch', async (request) => {
   }
 });
 
+route('GET', '/api/mattress-suppliers', async (request) => {
+  await requirePortableAdmin(request);
+  if(!(process.env.SUPABASE_URL||process.env.POSTGREST_URL))
+    return Response.json({error:'Database is not configured in this preview.'},{status:503});
+  const rows=(await portableRuntime.db.list<any>('mattress-suppliers',{limit:100})).items;
+  const verified=rows.filter((r:any)=>r.haulerVerified&&r.recyclerVerified&&Number(r.pickupCost)>=0&&Number(r.recyclingCost)>=0);
+  const lanes=[...launchZips].map(zip=>{
+    const matches=verified.filter((r:any)=>Array.isArray(r.serviceZips)&&r.serviceZips.includes(zip))
+      .sort((a:any,b:any)=>(Number(a.pickupCost)+Number(a.recyclingCost))-(Number(b.pickupCost)+Number(b.recyclingCost)));
+    const primary=matches[0],backup=matches[1];
+    if(!primary||!backup)return {zip,routes:matches.length,status:matches.length===1?'BACKUP NEEDED':'BLOCKED',customerPrice:0,safeCost:0,expectedProfit:0,marginPct:0,primary:primary?.company||'',backup:''};
+    const safeCost=Math.max(Number(primary.pickupCost)+Number(primary.recyclingCost),Number(backup.pickupCost)+Number(backup.recyclingCost));
+    const reserve=15,target=Math.max(35,Math.ceil(safeCost*.3));
+    const customerPrice=Math.ceil((safeCost+reserve+target)/.97/5)*5;
+    const processing=Math.ceil(customerPrice*.03);
+    const expectedProfit=customerPrice-safeCost-processing-reserve;
+    const marginPct=Math.round(expectedProfit/customerPrice*100);
+    return {zip,routes:matches.length,status:expectedProfit>=35&&marginPct>=20?'SELLABLE':'MARGIN HOLD',customerPrice,safeCost,expectedProfit,marginPct,primary:primary.company,backup:backup.company};
+  });
+  return Response.json({suppliers:rows,lanes,ready:lanes.filter(x=>x.status==='SELLABLE').length,total:lanes.length,rule:'Two verified routes and protected economics are required before supplier-backed checkout.'});
+});
+
+route('POST', '/api/mattress-suppliers', async (request) => {
+  await requirePortableAdmin(request);
+  if(!(process.env.SUPABASE_URL||process.env.POSTGREST_URL))
+    return Response.json({error:'Database is not configured in this preview.'},{status:503});
+  const body=await request.json() as Record<string,unknown>;
+  const company=String(body.company||'').trim();
+  const serviceZips=(Array.isArray(body.serviceZips)?body.serviceZips:[]).map(String).filter(z=>launchZips.has(z));
+  const pickupCost=Number(body.pickupCost);
+  const recyclingCost=Number(body.recyclingCost);
+  if(!company) return Response.json({error:'Company required'},{status:400});
+  if(!serviceZips.length) return Response.json({error:'At least one supported ZIP is required'},{status:422});
+  if(!Number.isFinite(pickupCost)||pickupCost<0||!Number.isFinite(recyclingCost)||recyclingCost<0)
+    return Response.json({error:'Verified pickup and recycling costs are required'},{status:422});
+  if(body.haulerVerified!==true||body.recyclerVerified!==true)
+    return Response.json({error:'Hauler/service and recycler acceptance must both be verified before saving'},{status:422});
+  const record={
+    company,serviceZips,pickupCost,recyclingCost,
+    stairsSurcharge:Math.max(0,Number(body.stairsSurcharge)||0),
+    haulerVerified:true,recyclerVerified:true,acceptsContaminated:Boolean(body.acceptsContaminated),
+    notes:String(body.notes||'').trim().slice(0,1500),
+    status:'verified-cost-record',createdAt:new Date().toISOString()
+  };
+  const [id]=await portableRuntime.db.add('mattress-suppliers',[record]);
+  if(!id) return Response.json({error:'Could not save mattress supplier'},{status:500});
+  return Response.json({supplier:{...record,id},sending:'off',checkout:'protected'}, {status:201});
+});
+
 route('POST', '/api/mattress-test-contractor', async (request) => {
   await requirePortableAdmin(request);
   if(!(process.env.SUPABASE_URL||process.env.POSTGREST_URL))
