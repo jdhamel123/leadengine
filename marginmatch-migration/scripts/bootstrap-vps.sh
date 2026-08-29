@@ -125,6 +125,8 @@ echo "Waiting for app health..."
 for i in $(seq 1 30); do
   if curl -fsS http://127.0.0.1:3000/api/health >/dev/null 2>&1; then
     echo "MarginMatch Portable is healthy."
+    echo "Seeding Profit Factory portfolio..."
+    docker compose exec -T app npm run profit-factory:seed || echo "Profit Factory seed deferred; it can be rerun after database initialization."
     break
   fi
   if [ "$i" -eq 30 ]; then
