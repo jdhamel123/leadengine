@@ -8,7 +8,8 @@
     "build": "vite build",
     "preview": "vite preview",
     "vercel-build": "vite build",
-    "start": "tsx server.ts"
+    "start": "tsx server.ts",
+    "test": "tsx tests/portable-api.test.ts"
   },
   "dependencies": {
     "lucide-react": "^0.469.0",
