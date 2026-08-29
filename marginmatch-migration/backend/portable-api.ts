@@ -1108,6 +1108,72 @@ route('GET', '/api/contractor-portal/:token', async (_request,params) => {
   });
 });
 
+route('POST', '/api/revenue-lab/lead', async (request) => {
+  if(!databaseConfigured())return Response.json({error:'Database is not configured'},{status:503});
+  const body=await request.json() as Record<string,unknown>;
+  const tenantId=String(body.tenantId||'').trim();
+  const name=String(body.name||'').trim();
+  const phone=String(body.phone||'').replace(/[^0-9+]/g,'');
+  const email=String(body.email||'').trim().toLowerCase();
+  const service=String(body.service||'').trim();
+  const zip=String(body.zip||'').trim();
+  const consent=body.consent===true;
+  if(!tenantId||!name||(!phone&&!email)||!service)return Response.json({error:'Tenant, name, contact, and service are required'},{status:400});
+  const [tenant]=await portableRuntime.db.get<any>('revenue-lab-tenants',[tenantId]);
+  if(!tenant||tenant.status!=='active')return Response.json({error:'Lead Rescue tenant is not active'},{status:404});
+  const [id]=await portableRuntime.db.add('revenue-lab-leads',[{
+    tenantId,name,phone,email,service,zip,
+    message:String(body.message||'').slice(0,3000),
+    consent,
+    status:'new',
+    source:String(body.source||'web'),
+    automationStatus:tenant.productionMessagingEnabled===true&&consent?'eligible':'held',
+    createdAt:new Date().toISOString()
+  }]);
+  await audit({kind:'revenue-lab',action:'lead-captured',status:'ok',actor:'public',detail:{tenantId,leadId:id,service,zip}});
+  return Response.json({id,status:'captured',automationStatus:tenant.productionMessagingEnabled===true&&consent?'eligible':'held'},{status:201});
+});
+
+route('POST', '/api/revenue-lab/tenant', async (request) => {
+  const admin=await requirePortableAdmin(request);
+  const body=await request.json() as Record<string,unknown>;
+  const businessName=String(body.businessName||'').trim();
+  if(!businessName)return Response.json({error:'Business name is required'},{status:400});
+  const [id]=await portableRuntime.db.add('revenue-lab-tenants',[{
+    businessName,
+    slug:String(body.slug||businessName.toLowerCase().replace(/[^a-z0-9]+/g,'-').replace(/^-|-$/g,'')),
+    services:Array.isArray(body.services)?body.services:[],
+    serviceZips:Array.isArray(body.serviceZips)?body.serviceZips:[],
+    approvedPriceGuidance:body.approvedPriceGuidance||{},
+    bookingUrl:String(body.bookingUrl||''),
+    escalationContact:String(body.escalationContact||''),
+    followUpCadence:body.followUpCadence||[0,15,180,1440,4320],
+    productionMessagingEnabled:false,
+    status:'active',
+    createdBy:admin.email,
+    createdAt:new Date().toISOString()
+  }]);
+  return Response.json({id,productionMessagingEnabled:false,status:'active'},{status:201});
+});
+
+route('GET', '/api/revenue-lab/summary', async (request) => {
+  await requirePortableAdmin(request);
+  const [tenants,leads,appointments,attribution]=await Promise.all([
+    portableRuntime.db.list<any>('revenue-lab-tenants',{limit:500}),
+    portableRuntime.db.list<any>('revenue-lab-leads',{limit:1000}),
+    portableRuntime.db.list<any>('revenue-lab-appointments',{limit:1000}),
+    portableRuntime.db.list<any>('revenue-lab-attribution',{limit:1000})
+  ]);
+  return Response.json({
+    tenants:tenants.items.length,
+    leads:leads.items.length,
+    qualified:leads.items.filter((x:any)=>x.status==='qualified').length,
+    appointments:appointments.items.length,
+    recoveredRevenue:attribution.items.reduce((n:any,x:any)=>n+Number(x.recoveredRevenue||0),0),
+    messagingLocked:tenants.items.filter((x:any)=>x.productionMessagingEnabled!==true).length
+  });
+});
+
 route('GET', '/api/system-health', async (request) => {
   await requirePortableAdmin(request);
   if(!databaseConfigured())return Response.json({error:'Database is not configured'},{status:503});
