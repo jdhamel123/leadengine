@@ -25,3 +25,7 @@ The live AppDeploy deployment remains untouched until an independent preview pas
 10. Preserve rollback until the replacement is proven.
 
 Existing locks must remain locked during migration: production payments, paid ads, unsolicited outreach, supplier commitments and inventory purchasing.
+
+## Current verification
+
+Portable CI is configured to build the Vite frontend and fail if any `@appdeploy/client` imports remain.
