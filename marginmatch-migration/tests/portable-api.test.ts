@@ -95,6 +95,24 @@ async function run() {
     assert.match(String(body.error),/not allowlisted/i);
   }
 
+  {
+    const response=await call('/api/mattress-driver-job/test-token/photo',{
+      kind:'wrong',content:'x'.repeat(200),contentType:'image/jpeg'
+    });
+    assert.equal(response.status,400);
+    const body=await json(response);
+    assert.match(String(body.error),/pickup or completion/i);
+  }
+
+  {
+    const response=await call('/api/mattress-driver-job/test-token/photo',{
+      kind:'pickup',content:'x'.repeat(200),contentType:'application/pdf'
+    });
+    assert.equal(response.status,422);
+    const body=await json(response);
+    assert.match(String(body.error),/JPG, PNG or WebP/i);
+  }
+
   console.log('Portable API contract tests passed.');
 }
 
