@@ -1,6 +1,6 @@
 import { StrictMode } from 'react';
 import { createRoot } from 'react-dom/client';
-import { api } from '@appdeploy/client';
+import { api } from './platform-client';
 import App from './App';
 import { PartnerCallOps } from './PartnerCallOps';
 import { ControlCenter } from './ControlCenter';
