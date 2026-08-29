@@ -11,8 +11,22 @@
     "types": ["node"]
   },
   "include": [
-    "src/**/*.ts",
-    "src/**/*.tsx",
+    "src/main.tsx",
+    "src/platform-client.ts",
+    "src/DriverJob.tsx",
+    "src/ContractorApply.tsx",
+    "src/ContractorPortal.tsx",
+    "src/ContractorAdmin.tsx",
+    "src/MattressRescueStorefront.tsx",
+    "src/MattressQualification.tsx",
+    "src/OwnerCockpit.tsx",
+    "src/ExceptionDashboard.tsx",
+    "src/PortableLogin.tsx",
+    "src/MigrationControl.tsx",
+    "src/PortableOperations.tsx",
+    "src/PortableHome.tsx",
+    "src/DataMigration.tsx",
+    "src/SystemHealth.tsx",
     "server.ts",
     "api/**/*.ts",
     "backend/index.ts",
@@ -30,6 +44,8 @@
     "backend/storage-supabase.ts",
     "backend/storage-s3.ts",
     "backend/storage-portable.ts",
-    "tests/**/*.ts"
+    "backend/observability.ts",
+    "tests/**/*.ts",
+    "scripts/**/*.ts"
   ]
 }
