@@ -8,7 +8,7 @@ function token() {
   return localStorage.getItem('marginmatch_access_token') || '';
 }
 
-async function request<T = any>(method: string, path: string, body?: unknown): Promise<T> {
+async function request<T = any>(method: string, path: string, body?: unknown): Promise<{ data: T }> {
   const headers: Record<string,string> = { 'Content-Type': 'application/json' };
   const accessToken = token();
   if (accessToken) headers.Authorization = 'Bearer ' + accessToken;
@@ -25,7 +25,7 @@ async function request<T = any>(method: string, path: string, body?: unknown): P
     const message = data?.error || data?.message || ('Request failed: ' + response.status);
     throw new Error(String(message));
   }
-  return data as T;
+  return { data: data as T };
 }
 
 export const api = {
