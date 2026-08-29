@@ -25,7 +25,31 @@ export const db={
   delete:(collection:string,ids:string[])=>postgresDb.delete(collection,ids)
 };
 
-export const secrets=envSecrets;
+export const secrets={
+  async listSecretNames(){
+    const names=await envSecrets.listSecretNames();
+    return names.filter((name)=>{
+      if(['RESEND_API_KEY','TWILIO_ACCOUNT_SID','TWILIO_AUTH_TOKEN','TWILIO_FROM_NUMBER'].includes(name))
+        return process.env.ENABLE_LEGACY_EXTERNAL_MESSAGING==='true';
+      if(name==='STRIPE_RESTRICTED_KEY'||name==='STRIPE_SECRET_KEY'){
+        const value=process.env[name]||'';
+        return value.includes('_test_') || process.env.ENABLE_LEGACY_LIVE_PAYMENTS==='true';
+      }
+      return true;
+    });
+  },
+  async readSecret(name:string){
+    if(['RESEND_API_KEY','TWILIO_ACCOUNT_SID','TWILIO_AUTH_TOKEN','TWILIO_FROM_NUMBER'].includes(name) &&
+       process.env.ENABLE_LEGACY_EXTERNAL_MESSAGING!=='true')
+      throw new Error('Legacy external messaging credentials are locked');
+    const value=await envSecrets.readSecret(name);
+    if((name==='STRIPE_RESTRICTED_KEY'||name==='STRIPE_SECRET_KEY') &&
+       value.includes('_live_') &&
+       process.env.ENABLE_LEGACY_LIVE_PAYMENTS!=='true')
+      throw new Error('Legacy live Stripe credentials are locked');
+    return value;
+  }
+};
 
 export const ai={
   generate:(options:AnyRecord)=>openAiAdapter.generate(options),
