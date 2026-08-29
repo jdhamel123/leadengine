@@ -24,7 +24,7 @@ function databaseConfigured(){
   return Boolean(process.env.DATABASE_URL||process.env.SUPABASE_URL||process.env.POSTGREST_URL);
 }
 
-const launchZipTown:Record<string,string>={02035:'Foxborough',02048:'Mansfield',02093:'Wrentham',02081:'Walpole',02067:'Sharon',02760:'North Attleborough',02766:'Norton'};
+const launchZipTown:Record<string,string>={'02035':'Foxborough','02048':'Mansfield','02093':'Wrentham','02081':'Walpole','02067':'Sharon','02760':'North Attleborough','02766':'Norton'};
 const launchZips = new Set(Object.keys(launchZipTown));
 
 function ownerHandledPrice(body: MattressQuoteBody) {
