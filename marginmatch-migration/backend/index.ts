@@ -1,4 +1,4 @@
-import { router, json, error, db, ai, secrets, storage, requireAuth, requireAdminEmailAllowlist } from '@appdeploy/sdk';
+import { router, json, error, db, ai, secrets, storage, requireAuth, requireAdminEmailAllowlist } from './platform';
 const ADMIN_EMAILS=['rhamel9036@aol.com'];
 
 type Rates = { yard10?: number; yard15?: number; yard20?: number; includedDays?: number; includedTons?: number; extraTon?: number; extraDay?: number };
