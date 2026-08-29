@@ -121,6 +121,45 @@ async function run(){
   assert.equal(repeatBody.matched,true);
   assert.match(String(repeatBody.error||''),/already accepted/i);
 
+  // Exercise the portable exception engine on a stale offer.
+  const staleBatch=await data(await call('/api/mattress-test-dispatch-offers',{
+    orderRef:'stale-order-'+suffix,
+    address:'200 Main St',
+    zip:'02035',
+    item:'Mattress',
+    count:1,
+    serviceDate:'2026-09-02',
+    preferredTime:'09:00'
+  }));
+  assert.ok(staleBatch.offered>=1);
+
+  const staleRows=(await portableRuntime.db.list<any>('mattress-driver-dispatches',{limit:500})).items
+    .filter((d:any)=>String(d.orderRef||'')==='stale-order-'+suffix);
+  for(const row of staleRows){
+    const seeded={...row,createdAt:new Date(Date.now()-3*60*60*1000).toISOString()};
+    delete seeded.id;
+    await portableRuntime.db.update('mattress-driver-dispatches',[{id:row.id,record:seeded}]);
+  }
+
+  const scan1=await data(await call('/api/portable-exceptions/scan',{}));
+  assert.equal(scan1.scanned,true);
+  const ex1=await data(await call('/api/portable-exceptions'));
+  const matchingOpen=(ex1.exceptions as any[]).filter((x:any)=>String(x.exceptionKey||'')==='dispatch-no-accept:stale-order-'+suffix && x.status!=='resolved');
+  assert.equal(matchingOpen.length,1);
+
+  const scan2=await data(await call('/api/portable-exceptions/scan',{}));
+  assert.equal(scan2.scanned,true);
+  const ex2=await data(await call('/api/portable-exceptions'));
+  const matchingStillOne=(ex2.exceptions as any[]).filter((x:any)=>String(x.exceptionKey||'')==='dispatch-no-accept:stale-order-'+suffix && x.status!=='resolved');
+  assert.equal(matchingStillOne.length,1);
+
+  const staleFirst=staleBatch.offers[0];
+  await data(await call('/api/mattress-driver-job/'+String(staleFirst.jobUrl).split('#driver-job=')[1]+'/respond',{decision:'accept'}));
+  await data(await call('/api/portable-exceptions/scan',{}));
+  const ex3=await data(await call('/api/portable-exceptions'));
+  const resolved=(ex3.exceptions as any[]).find((x:any)=>String(x.exceptionKey||'')==='dispatch-no-accept:stale-order-'+suffix);
+  assert.equal(resolved.status,'resolved');
+
   // Continue lifecycle using a dedicated job for the primary contractor.
   const job=await data(await call('/api/mattress-test-driver-job',{
     driverProfileId:contractor.id,
