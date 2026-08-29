@@ -489,6 +489,88 @@ route('POST', '/api/mattress-driver-job/:token/complete', async (request,params)
   });
 });
 
+route('GET', '/api/contractor-admin', async () => {
+  if(!(process.env.SUPABASE_URL||process.env.POSTGREST_URL))
+    return Response.json({error:'Database is not configured in this preview.'},{status:503});
+
+  const profiles=(await portableRuntime.db.list<any>('mattress-driver-profiles',{limit:200})).items
+    .filter((p:any)=>p.contractorApproved===true);
+  const applications=(await portableRuntime.db.list<any>('contractor-applications',{limit:200})).items;
+  const dispatches=(await portableRuntime.db.list<any>('mattress-driver-dispatches',{limit:500})).items;
+  const payments=(await portableRuntime.db.list<any>('contractor-payments',{limit:500})).items;
+  const year=String(new Date().getFullYear());
+
+  const drivers=profiles.map((p:any)=>{
+    const jobs=dispatches.filter((d:any)=>
+      String(d.driverProfileId||'')===String(p.id) &&
+      String(d.status||'')==='completed' &&
+      String(d.completedAt||'').startsWith(year)
+    );
+    const ytdEarned=jobs.reduce((n:number,j:any)=>n+Number(j.compensationAmount||p.payPerJob||0),0);
+    const ytdPaid=payments.filter((x:any)=>
+      String(x.driverProfileId||'')===String(p.id) &&
+      String(x.paidAt||'').startsWith(year)
+    ).reduce((n:number,x:any)=>n+Number(x.amount||0),0);
+    return {
+      id:p.id,name:p.name,phone:p.phone,payPerJob:Number(p.payPerJob||0),
+      completedJobs:jobs.length,ytdEarned,ytdPaid,owed:Math.max(0,ytdEarned-ytdPaid)
+    };
+  }).sort((a:any,b:any)=>b.owed-a.owed||String(a.name).localeCompare(String(b.name)));
+
+  return Response.json({
+    applications,
+    drivers,
+    summary:{
+      contractors:drivers.length,
+      ytdEarned:drivers.reduce((n:number,d:any)=>n+d.ytdEarned,0),
+      ytdPaid:drivers.reduce((n:number,d:any)=>n+d.ytdPaid,0),
+      owed:drivers.reduce((n:number,d:any)=>n+d.owed,0)
+    },
+    testMode:true
+  });
+});
+
+route('POST', '/api/contractor-payments', async (request) => {
+  if(!(process.env.SUPABASE_URL||process.env.POSTGREST_URL))
+    return Response.json({error:'Database is not configured in this preview.'},{status:503});
+
+  const body=await request.json() as Record<string,unknown>;
+  const driverProfileId=String(body.driverProfileId||'').trim();
+  const amount=Math.round(Number(body.amount||0)*100)/100;
+  const note=String(body.note||'Contractor payment').trim().slice(0,300);
+  if(!driverProfileId||amount<=0)
+    return Response.json({error:'Contractor and positive payment amount are required'},{status:400});
+
+  const profiles=(await portableRuntime.db.list<any>('mattress-driver-profiles',{limit:200})).items;
+  const profile=profiles.find((p:any)=>String(p.id||'')===driverProfileId && p.contractorApproved===true);
+  if(!profile) return Response.json({error:'Approved contractor not found'},{status:404});
+
+  const year=String(new Date().getFullYear());
+  const dispatches=(await portableRuntime.db.list<any>('mattress-driver-dispatches',{limit:500})).items
+    .filter((d:any)=>String(d.driverProfileId||'')===driverProfileId && String(d.status||'')==='completed' && String(d.completedAt||'').startsWith(year));
+  const payments=(await portableRuntime.db.list<any>('contractor-payments',{limit:500})).items
+    .filter((p:any)=>String(p.driverProfileId||'')===driverProfileId && String(p.paidAt||'').startsWith(year));
+
+  const earned=dispatches.reduce((n:number,d:any)=>n+Number(d.compensationAmount||profile.payPerJob||0),0);
+  const paid=payments.reduce((n:number,p:any)=>n+Number(p.amount||0),0);
+  const owed=Math.max(0,Math.round((earned-paid)*100)/100);
+  if(amount>owed)
+    return Response.json({error:'Payment exceeds current amount owed',owed},{status:422});
+
+  const record={
+    driverProfileId,amount,note,paidAt:new Date().toISOString(),
+    paymentMode:'record-only',testMode:true,createdAt:new Date().toISOString()
+  };
+  const [id]=await portableRuntime.db.add('contractor-payments',[record]);
+  if(!id) return Response.json({error:'Could not record contractor payment'},{status:500});
+
+  return Response.json({
+    recorded:true,id,payment:record,
+    summary:{earned,paid:Math.round((paid+amount)*100)/100,owed:Math.max(0,Math.round((owed-amount)*100)/100)},
+    moneyMoved:false
+  },{status:201});
+});
+
 route('GET', '/api/contractor-portal/:token', async (_request,params) => {
   if(!(process.env.SUPABASE_URL||process.env.POSTGREST_URL))
     return Response.json({error:'Database is not configured in this preview.'},{status:503});
