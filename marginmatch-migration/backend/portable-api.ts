@@ -799,32 +799,18 @@ route('POST', '/api/mattress-driver-job/:token/respond', async (request,params) 
   if(!['offered','text-sent'].includes(String(d.status||'')))
     return Response.json({error:'Job is no longer awaiting a response'},{status:409});
   if(decision==='accept' && d.orderRef){
-    const winner=rows.find((x:any)=>
-      String(x.orderRef||'')===String(d.orderRef||'') &&
-      String(x.id||'')!==String(d.id||'') &&
-      String(x.status||'')==='accepted'
-    );
-    if(winner) return Response.json({error:'Another contractor already accepted this job'},{status:409});
+    const claim=await portableRuntime.db.claimDispatchOffer('mattress-driver-dispatches',String(d.id),String(d.orderRef));
+    if(!claim.won){
+      const status=claim.reason==='already-accepted'||claim.reason==='offer-not-open'?409:404;
+      return Response.json({error:claim.reason==='already-accepted'?'Another contractor already accepted this job':'Job is no longer available',reason:claim.reason},{status});
+    }
+    return Response.json({status:'accepted',firstAccepted:true,atomic:true});
   }
 
-  const record={...d,status:decision==='accept'?'accepted':'declined',
-    [decision==='accept'?'acceptedAt':'declinedAt']:new Date().toISOString()};
+  const record={...d,status:'declined',declinedAt:new Date().toISOString()};
   delete (record as any).id;
   await portableRuntime.db.update('mattress-driver-dispatches',[{id:d.id,record}]);
-
-  if(decision==='accept' && d.orderRef){
-    for(const sibling of rows.filter((x:any)=>
-      String(x.orderRef||'')===String(d.orderRef||'') &&
-      String(x.id||'')!==String(d.id||'') &&
-      String(x.status||'')==='offered'
-    )){
-      const superseded={...sibling,status:'superseded',supersededAt:new Date().toISOString()};
-      delete (superseded as any).id;
-      await portableRuntime.db.update('mattress-driver-dispatches',[{id:sibling.id,record:superseded}]);
-    }
-  }
-
-  return Response.json({status:record.status,firstAccepted:decision==='accept'});
+  return Response.json({status:'declined',firstAccepted:false});
 });
 
 route('POST', '/api/mattress-driver-job/:token/progress', async (request,params) => {
