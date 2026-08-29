@@ -113,6 +113,17 @@ async function run() {
     assert.match(String(body.error),/JPG, PNG or WebP/i);
   }
 
+  {
+    const response=await call('/api/mattress-test-contractor',{
+      name:'Test Driver',phone:'5085551212',payPerJob:0
+    });
+    assert.ok([400,503].includes(response.status));
+    if(response.status===400){
+      const body=await json(response);
+      assert.match(String(body.error),/positive pay-per-job/i);
+    }
+  }
+
   console.log('Portable API contract tests passed.');
 }
 
