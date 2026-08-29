@@ -303,7 +303,28 @@ route('POST', '/api/mattress-test-confirmation', async (request) => {
       }
     }
 
-    return Response.json({receipt,testMode:true,liveFunds:false,emailSent,emailId});
+    let dispatch={matched:false,offered:0,offers:[] as any[],orderRef:sessionId,testMode:true};
+    if(order && receipt.serviceType==='pickup'){
+      try{
+        dispatch=await createDispatchOffers({
+          orderRef:sessionId,
+          zip:String(order.zip||receipt.zip||''),
+          address:String(order.address||''),
+          item:String(order.item||'Mattress'),
+          count:Math.max(1,Number(order.count||1)),
+          serviceDate:String(order.preferredDate||''),
+          preferredTime:String(order.preferredTime||'')
+        }) as any;
+      }catch(error){
+        console.warn('Migration auto-dispatch skipped:',error instanceof Error?error.message:'unknown');
+      }
+    }
+
+    return Response.json({
+      receipt,testMode:true,liveFunds:false,emailSent,emailId,
+      dispatch,
+      nextStep:receipt.serviceType==='customer-drop-off'?'drop-off instructions':'contractor offer routing'
+    });
   }catch(error){
     const message=error instanceof Error?error.message:'Could not load booking confirmation';
     const status=message.includes('Valid Stripe test session')?400:502;
@@ -348,10 +369,62 @@ route('POST', '/api/mattress-test-contractor', async (request) => {
   return Response.json({created:true,id,token,portalUrl,profile:{...profile,id}},{status:201});
 });
 
+async function createDispatchOffers(input:{
+  orderRef:string;zip:string;address:string;item:string;count:number;serviceDate:string;preferredTime:string;
+}) {
+  const profiles=(await portableRuntime.db.list<any>('mattress-driver-profiles',{limit:200})).items
+    .filter((p:any)=>p.contractorApproved===true && Array.isArray(p.serviceZips) && p.serviceZips.includes(input.zip))
+    .sort((a:any,b:any)=>Number(a.priority||10)-Number(b.priority||10)||String(a.name||'').localeCompare(String(b.name||'')));
+
+  if(!profiles.length) return {offered:0,offers:[],matched:false,error:'No approved contractors cover this ZIP',orderRef:input.orderRef,testMode:true};
+
+  const all=(await portableRuntime.db.list<any>('mattress-driver-dispatches',{limit:500})).items;
+  const existing=all.filter((d:any)=>String(d.orderRef||'')===input.orderRef);
+  if(existing.some((d:any)=>String(d.status||'')==='accepted'))
+    return {offered:0,offers:[],matched:true,error:'A contractor has already accepted this order',orderRef:input.orderRef,testMode:true};
+  const active=existing.filter((d:any)=>!['declined','superseded','expired'].includes(String(d.status||'')));
+  if(active.length){
+    return {
+      offered:active.length,
+      offers:active.map((d:any)=>({
+        id:d.id,driverProfileId:d.driverProfileId,driverName:d.driverName,
+        jobUrl:(process.env.PORTABLE_PUBLIC_URL||'http://localhost:3000')+'/#driver-job='+d.token,
+        smsSent:false,status:d.status
+      })),
+      matched:true,orderRef:input.orderRef,testMode:true,idempotent:true
+    };
+  }
+
+  const offers:any[]=[];
+  for(const p of profiles){
+    const token=crypto.randomUUID();
+    const record={
+      orderRef:input.orderRef,status:'offered',token,driverPhone:String(p.phone||''),driverName:String(p.name||'Driver'),
+      driverProfileId:String(p.id||''),item:input.item,count:input.count,address:input.address,zip:input.zip,
+      serviceDate:input.serviceDate,preferredTime:input.preferredTime,
+      pickupPhotoPath:'',completionPhotoPath:'',compensationAmount:0,compensationRecordedAt:'',
+      createdAt:new Date().toISOString(),testMode:true
+    };
+    const [id]=await portableRuntime.db.add('mattress-driver-dispatches',[record]);
+    if(!id) continue;
+    const jobUrl=(process.env.PORTABLE_PUBLIC_URL||'http://localhost:3000')+'/#driver-job='+token;
+    let smsSent=false;
+    try{
+      if(p.phone){
+        const sent=await sendTestSms(String(p.phone),'Mattress Rescue TEST job offer: '+input.item+' × '+input.count+', ZIP '+input.zip+', '+(input.serviceDate||'date TBD')+' '+(input.preferredTime||'')+'. First approved contractor to accept gets the job: '+jobUrl);
+        smsSent=Boolean(sent.sid);
+      }
+    }catch(error){
+      console.warn('Migration driver offer SMS skipped:',error instanceof Error?error.message:'unknown');
+    }
+    offers.push({id,driverProfileId:p.id,driverName:p.name,jobUrl,smsSent,status:'offered'});
+  }
+  return {offered:offers.length,offers,matched:offers.length>0,orderRef:input.orderRef,testMode:true};
+}
+
 route('POST', '/api/mattress-test-dispatch-offers', async (request) => {
   if(!(process.env.SUPABASE_URL||process.env.POSTGREST_URL))
     return Response.json({error:'Database is not configured in this preview.'},{status:503});
-
   const body=await request.json() as Record<string,unknown>;
   const zip=String(body.zip||'').trim();
   const address=String(body.address||'').trim();
@@ -362,46 +435,8 @@ route('POST', '/api/mattress-test-dispatch-offers', async (request) => {
   const orderRef=String(body.orderRef||crypto.randomUUID());
   if(!/^[0-9]{5}$/.test(zip)||!address)
     return Response.json({error:'Valid service ZIP and pickup address are required'},{status:400});
-
-  const profiles=(await portableRuntime.db.list<any>('mattress-driver-profiles',{limit:200})).items
-    .filter((p:any)=>p.contractorApproved===true && Array.isArray(p.serviceZips) && p.serviceZips.includes(zip))
-    .sort((a:any,b:any)=>Number(a.priority||10)-Number(b.priority||10)||String(a.name||'').localeCompare(String(b.name||'')));
-
-  if(!profiles.length)
-    return Response.json({offered:0,offers:[],matched:false,error:'No approved contractors cover this ZIP'},{status:422});
-
-  const existing=(await portableRuntime.db.list<any>('mattress-driver-dispatches',{limit:500})).items
-    .filter((d:any)=>String(d.orderRef||'')===orderRef && !['declined','superseded','expired'].includes(String(d.status||'')));
-
-  if(existing.some((d:any)=>String(d.status||'')==='accepted'))
-    return Response.json({error:'A contractor has already accepted this order'},{status:409});
-
-  const offers:any[]=[];
-  for(const p of profiles){
-    if(existing.some((d:any)=>String(d.driverProfileId||'')===String(p.id))) continue;
-    const token=crypto.randomUUID();
-    const record={
-      orderRef,status:'offered',token,driverPhone:String(p.phone||''),driverName:String(p.name||'Driver'),
-      driverProfileId:String(p.id||''),item,count,address,zip,serviceDate,preferredTime,
-      pickupPhotoPath:'',completionPhotoPath:'',compensationAmount:0,compensationRecordedAt:'',
-      createdAt:new Date().toISOString(),testMode:true
-    };
-    const [id]=await portableRuntime.db.add('mattress-driver-dispatches',[record]);
-    if(!id) continue;
-    const jobUrl=(process.env.PORTABLE_PUBLIC_URL||'http://localhost:3000')+'/#driver-job='+token;
-    let smsSent=false;
-    try{
-      if(p.phone){
-        const sent=await sendTestSms(String(p.phone),'Mattress Rescue TEST job offer: '+item+' × '+count+', ZIP '+zip+', '+(serviceDate||'date TBD')+' '+(preferredTime||'')+'. First approved contractor to accept gets the job: '+jobUrl);
-        smsSent=Boolean(sent.sid);
-      }
-    }catch(error){
-      console.warn('Migration driver offer SMS skipped:',error instanceof Error?error.message:'unknown');
-    }
-    offers.push({id,driverProfileId:p.id,driverName:p.name,jobUrl,smsSent,status:'offered'});
-  }
-
-  return Response.json({offered:offers.length,offers,matched:offers.length>0,orderRef,testMode:true});
+  const result=await createDispatchOffers({orderRef,zip,address,item,count,serviceDate,preferredTime});
+  return Response.json(result,{status:result.matched?200:422});
 });
 
 route('POST', '/api/mattress-test-driver-job', async (request) => {
