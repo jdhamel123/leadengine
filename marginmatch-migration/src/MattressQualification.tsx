@@ -1,5 +1,5 @@
 import { useEffect,useState } from 'react';
-import { api } from '@appdeploy/client';
+import { api } from './platform-client';
 
 type Lane={zip:string;town:string;routes:number;status:string;customerPrice:number;safeCost:number;expectedProfit:number;marginPct:number;primary:string;backup:string};
 type Data={suppliers:Array<{id:string;company:string;serviceZips:string[];pickupCost:number;recyclingCost:number;stairsSurcharge:number;acceptsContaminated:boolean}>;lanes:Lane[];ready:number;total:number;rule:string};
