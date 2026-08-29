@@ -52,8 +52,7 @@ export const auth = {
   },
 
   async signIn(): Promise<void> {
-    const returnTo = encodeURIComponent(window.location.href);
-    window.location.href = '/api/auth/sign-in?returnTo=' + returnTo;
+    window.location.hash = '#portable-login';
   },
 
   setAccessToken(value: string) {
