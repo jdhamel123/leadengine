@@ -28,6 +28,8 @@
     "backend/resend-portable.ts",
     "backend/twilio-portable.ts",
     "backend/storage-supabase.ts",
+    "backend/storage-s3.ts",
+    "backend/storage-portable.ts",
     "tests/**/*.ts"
   ]
 }
