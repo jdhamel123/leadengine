@@ -1,0 +1,18 @@
+import {useEffect,useState} from 'react';
+import {api,auth} from './platform-client';
+
+type P={experiments:Array<any>;totals:{revenue:number;contributionProfit:number;profitable:number;losing:number}};
+export function ProfitFactory(){
+ const[d,setD]=useState<P|null>(null),[msg,setMsg]=useState('Loading portfolio…');
+ async function load(){try{const r=await api.get('/api/profit-factory/portfolio');setD(r.data);setMsg('')}catch(e:any){setMsg(e?.message||'Owner access required')}}
+ useEffect(()=>{load()},[]);
+ if(!d)return <div className='min-h-screen bg-slate-950 p-6 text-white'><div className='mx-auto mt-20 max-w-md rounded-3xl bg-slate-900 p-6 text-center'><h1 className='text-2xl font-black'>Profit Factory</h1><p className='mt-3 text-slate-400'>{msg}</p>{!auth.isSignedIn()&&<button onClick={()=>auth.signIn()} className='mt-5 rounded-xl bg-emerald-400 px-5 py-3 font-black text-slate-950'>Owner sign in</button>}</div></div>;
+ return <div className='min-h-screen bg-[#06101c] p-4 text-white'><div className='mx-auto max-w-7xl'>
+  <header className='rounded-3xl border border-slate-800 bg-slate-900 p-6'><div className='text-xs font-black tracking-[.2em] text-emerald-300'>MARGINMATCH</div><h1 className='mt-2 text-3xl font-black'>Profit Factory</h1><p className='mt-2 text-slate-400'>Keep anything profitable. Improve promising experiments. Scale proven winners.</p></header>
+  <section className='mt-4 grid grid-cols-2 gap-3 md:grid-cols-4'>{[['Revenue','$'+d.totals.revenue.toLocaleString()],['Contribution profit','$'+d.totals.contributionProfit.toLocaleString()],['Profitable',d.totals.profitable],['Losing',d.totals.losing]].map(([k,v])=><div key={String(k)} className='rounded-2xl border border-slate-800 bg-slate-900 p-4'><div className='text-2xl font-black'>{String(v)}</div><div className='mt-1 text-xs text-slate-500'>{String(k)}</div></div>)}</section>
+  <section className='mt-4 rounded-3xl border border-slate-800 bg-slate-900 p-5'><div className='flex items-center justify-between'><h2 className='text-xl font-black'>Businesses</h2><button onClick={load} className='rounded-xl bg-slate-800 px-4 py-2 text-xs font-black'>Refresh</button></div>
+   <div className='mt-4 grid gap-3 md:grid-cols-2 lg:grid-cols-3'>{d.experiments.sort((a,b)=>Number(b.contributionProfit||0)-Number(a.contributionProfit||0)).map((x:any)=><div key={x.id} className='rounded-2xl bg-slate-950 p-4'><div className='flex justify-between gap-3'><div><div className='font-black'>{x.name}</div><div className='text-xs text-slate-500'>{x.vertical} · {x.model}</div></div><div className='text-right'><div className='font-black'>{Number(x.contributionProfit||0)>=0?'+':''}${Number(x.contributionProfit||0).toFixed(2)}</div><div className='text-xs uppercase text-emerald-300'>{x.recommendation||x.status}</div></div></div><div className='mt-3 grid grid-cols-3 gap-2 text-xs'><div className='rounded-lg bg-slate-900 p-2'>Revenue<br/><b>${Number(x.collectedRevenue||0).toFixed(2)}</b></div><div className='rounded-lg bg-slate-900 p-2'>Automation<br/><b>{Number(x.automationRate||0)}%</b></div><div className='rounded-lg bg-slate-900 p-2'>Human min<br/><b>{Number(x.humanExceptionMinutes||0)}</b></div></div></div>)}</div>
+  </section>
+  <div className='mt-4 grid gap-3 sm:grid-cols-4'><a href='#revenue-lab' className='rounded-2xl bg-violet-300 p-4 text-center font-black text-slate-950'>Revenue Lab</a><a href='#owner' className='rounded-2xl bg-emerald-400 p-4 text-center font-black text-slate-950'>Owner</a><a href='#system-health' className='rounded-2xl bg-rose-300 p-4 text-center font-black text-slate-950'>Health</a><a href='#migration' className='rounded-2xl bg-cyan-300 p-4 text-center font-black text-slate-950'>Migration</a></div>
+ </div></div>
+}
