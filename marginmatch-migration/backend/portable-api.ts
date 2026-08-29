@@ -5,6 +5,7 @@ import { sendMattressConfirmation } from './resend-portable';
 import { sendTestSms } from './twilio-portable';
 import { writePortableObject, portableStorageMode } from './storage-portable';
 import { requireAdmin, issueAdminSession, resolveUser } from './auth-portable';
+import { audit, deadLetter, requestId } from './observability';
 
 type MattressQuoteBody = {
   zip?: string;
@@ -49,6 +50,7 @@ function ownerHandledPrice(body: MattressQuoteBody) {
 }
 
 route('POST', '/api/auth/login', async (request) => {
+  const rid=requestId(request);
   const body=await request.json() as Record<string,unknown>;
   const email=String(body.email||'').trim().toLowerCase();
   const accessKey=String(body.accessKey||'');
@@ -56,9 +58,9 @@ route('POST', '/api/auth/login', async (request) => {
   const allowlist=String(process.env.ADMIN_EMAIL_ALLOWLIST||'').split(',').map(x=>x.trim().toLowerCase()).filter(Boolean);
   if(!expected||!process.env.PORTABLE_SESSION_SECRET)
     return Response.json({error:'Portable admin login is not configured'},{status:503});
-  if(!email||!allowlist.includes(email)||accessKey!==expected)
-    return Response.json({error:'Invalid admin credentials'},{status:401});
+  if(!email||!allowlist.includes(email)||accessKey!==expected){await audit({requestId:rid,kind:'auth',action:'login',status:'blocked',actor:email||'unknown'});return Response.json({error:'Invalid admin credentials'},{status:401});}
   const token=await issueAdminSession(email);
+  await audit({requestId:rid,kind:'auth',action:'login',status:'ok',actor:email});
   return Response.json({token,email,expiresInSeconds:43200});
 });
 
@@ -346,7 +348,9 @@ route('POST', '/api/mattress-test-confirmation', async (request) => {
         });
         emailSent=Boolean(sent.id); emailId=sent.id;
       }catch(error){
-        console.warn('Migration confirmation email skipped:',error instanceof Error?error.message:'unknown');
+        const message=error instanceof Error?error.message:'unknown';
+        console.warn('Migration confirmation email skipped:',message);
+        await deadLetter({kind:'email',operation:'mattress-confirmation',payload:{to:String(order.email||''),receiptNumber},error:message,orderRef:sessionId});
       }
     }
 
@@ -363,7 +367,9 @@ route('POST', '/api/mattress-test-confirmation', async (request) => {
           preferredTime:String(order.preferredTime||'')
         }) as any;
       }catch(error){
-        console.warn('Migration auto-dispatch skipped:',error instanceof Error?error.message:'unknown');
+        const message=error instanceof Error?error.message:'unknown';
+        console.warn('Migration auto-dispatch skipped:',message);
+        await deadLetter({kind:'dispatch',operation:'auto-dispatch',payload:{zip:String(order?.zip||receipt.zip||''),sessionId},error:message,orderRef:sessionId});
       }
     }
 
@@ -714,7 +720,9 @@ async function createDispatchOffers(input:{
         smsSent=Boolean(sent.sid);
       }
     }catch(error){
-      console.warn('Migration driver offer SMS skipped:',error instanceof Error?error.message:'unknown');
+      const message=error instanceof Error?error.message:'unknown';
+      console.warn('Migration driver offer SMS skipped:',message);
+      await deadLetter({kind:'sms',operation:'driver-offer',payload:{driverProfileId:p.id,jobUrl},error:message,orderRef:input.orderRef});
     }
     offers.push({id,driverProfileId:p.id,driverName:p.name,jobUrl,smsSent,status:'offered'});
   }
@@ -966,7 +974,9 @@ route('POST', '/api/contractor-applications/:id/approve', async (request,params)
     const sms=await sendTestSms(String(app.phone||''),'Mattress Rescue TEST contractor approval. Portal: '+portalUrl);
     smsSent=Boolean(sms.sid);
   }catch(error){
-    console.warn('Migration contractor approval SMS skipped:',error instanceof Error?error.message:'unknown');
+    const message=error instanceof Error?error.message:'unknown';
+    console.warn('Migration contractor approval SMS skipped:',message);
+    await deadLetter({kind:'sms',operation:'contractor-approval',payload:{driverProfileId:profileId},error:message});
   }
 
   return Response.json({
