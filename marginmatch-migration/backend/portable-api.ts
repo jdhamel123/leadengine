@@ -3,7 +3,7 @@ import { portableRuntime } from './portable-runtime';
 import { createMattressTestCheckout, getMattressTestConfirmation } from './stripe-test';
 import { sendMattressConfirmation } from './resend-portable';
 import { sendTestSms } from './twilio-portable';
-import { writeProof } from './storage-supabase';
+import { writePortableObject, portableStorageMode } from './storage-portable';
 import { requireAdmin, issueAdminSession, resolveUser } from './auth-portable';
 
 type MattressQuoteBody = {
@@ -861,7 +861,7 @@ route('POST', '/api/mattress-driver-job/:token/photo', async (request,params) =>
   try{
     const ext=contentType==='image/png'?'png':contentType==='image/webp'?'webp':'jpg';
     const proofPath='mattress-driver/'+d.id+'/'+kind+'-'+Date.now()+'.'+ext;
-    await writeProof(proofPath,content,contentType);
+    await writePortableObject(proofPath,content,contentType);
     const record={...d,[kind==='pickup'?'pickupPhotoPath':'completionPhotoPath']:proofPath,
       [kind==='pickup'?'pickupPhotoAt':'completionPhotoAt']:new Date().toISOString()};
     delete (record as any).id;
@@ -1250,7 +1250,7 @@ route('GET', '/api/migration-readiness', async (request) => {
     {id:'stripe-test',label:'Stripe test key configured',pass:Boolean((process.env.STRIPE_RESTRICTED_KEY||process.env.STRIPE_SECRET_KEY||'').includes('_test_'))},
     {id:'email',label:'Resend configured',pass:Boolean(process.env.RESEND_API_KEY)},
     {id:'sms',label:'Twilio configured',pass:Boolean(process.env.TWILIO_ACCOUNT_SID&&process.env.TWILIO_AUTH_TOKEN&&process.env.TWILIO_FROM_NUMBER)},
-    {id:'storage',label:'Proof storage configured',pass:Boolean(process.env.SUPABASE_URL&&process.env.SUPABASE_SERVICE_ROLE_KEY&&process.env.SUPABASE_PROOF_BUCKET)},
+    {id:'storage',label:'Proof storage configured',pass:portableStorageMode()!=='unconfigured'},
     {id:'ai',label:'AI configured',pass:Boolean(process.env.OPENAI_API_KEY)},
     {id:'auth',label:'Auth verifier configured',pass:Boolean(process.env.AUTH_VERIFY_URL)},
     {id:'public-url',label:'Portable public URL configured',pass:Boolean(process.env.PORTABLE_PUBLIC_URL)}
