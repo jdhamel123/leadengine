@@ -29,3 +29,5 @@ Existing locks must remain locked during migration: production payments, paid ad
 ## Current verification
 
 Portable CI is configured to build the Vite frontend and fail if any `@appdeploy/client` imports remain.
+
+- Frontend completeness verified: all AppDeploy-client screens use `src/platform-client.ts`, and the missing `MarginMatchPublic` component has been restored.
