@@ -74,6 +74,23 @@ async function run(){
   assert.equal(portal.summary.ytdPaid,0);
   assert.equal(portal.summary.owed,45);
 
+  // Payment recording reduces owed balance but does not move money.
+  const payment=await data(await call('/api/contractor-payments',{
+    driverProfileId:contractor.id,amount:20,note:'portable workflow test payment'
+  }));
+  assert.equal(payment.recorded,true);
+  assert.equal(payment.moneyMoved,false);
+  assert.equal(payment.summary.owed,25);
+
+  const portalAfterPay=await data(await call('/api/contractor-portal/'+contractor.token));
+  assert.equal(portalAfterPay.summary.ytdPaid,20);
+  assert.equal(portalAfterPay.summary.owed,25);
+
+  const overpay=await call('/api/contractor-payments',{
+    driverProfileId:contractor.id,amount:30,note:'should fail'
+  });
+  assert.equal(overpay.status,422);
+
   // Completion is idempotent from a compensation perspective.
   const after=(await portableRuntime.db.list<any>('mattress-driver-dispatches',{limit:200})).items
     .find((d:any)=>String(d.token||'')===job.token);
