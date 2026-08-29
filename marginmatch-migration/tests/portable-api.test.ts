@@ -124,6 +124,18 @@ async function run() {
     }
   }
 
+  {
+    const response=await call('/api/contractor-applications',{
+      name:'Test Applicant',email:'test@example.com',phone:'5085551212',zip:'02035',
+      licenseConfirmed:true,insuranceConfirmed:true,backgroundConsent:false,contractorAcknowledged:true
+    });
+    assert.ok([422,503].includes(response.status));
+    if(response.status===422){
+      const body=await json(response);
+      assert.match(String(body.error),/acknowledgments/i);
+    }
+  }
+
   console.log('Portable API contract tests passed.');
 }
 
