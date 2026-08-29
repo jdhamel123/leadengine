@@ -29,8 +29,17 @@ async function request<T = any>(method: string, path: string, body?: unknown): P
 }
 
 export const api = {
-  get<T = any>(path: string) { return request<T>('GET', path); },
+  get<T = any>(path: string, query?: Record<string,unknown>) {
+    if(query){
+      const u=new URL(path,window.location.origin);
+      Object.entries(query).forEach(([k,v])=>{if(v!==undefined&&v!==null)u.searchParams.set(k,String(v));});
+      return request<T>('GET', u.pathname+u.search);
+    }
+    return request<T>('GET', path);
+  },
   post<T = any>(path: string, body?: unknown) { return request<T>('POST', path, body); },
+  put<T = any>(path: string, body?: unknown) { return request<T>('PUT', path, body); },
+  delete<T = any>(path: string, body?: unknown) { return request<T>('DELETE', path, body); },
 };
 
 export const auth = {
