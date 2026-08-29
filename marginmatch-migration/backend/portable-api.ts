@@ -1,5 +1,6 @@
 import { route, handleRequest } from './http-portable';
 import { portableRuntime } from './portable-runtime';
+import { createMattressTestCheckout, getMattressTestConfirmation } from './stripe-test';
 
 type MattressQuoteBody = {
   zip?: string;
@@ -207,18 +208,89 @@ route('POST', '/api/leads', async (request) => {
   return Response.json({ id, attribution }, { status: 201 });
 });
 
-route('POST', '/api/mattress-test-checkout', async () => {
-  return Response.json({
-    error: 'Stripe checkout is intentionally disabled in the portable migration preview.',
-    code: 'MIGRATION_PAYMENT_LOCK',
-  }, { status: 423 });
+route('POST', '/api/mattress-test-checkout', async (request) => {
+  const x=await request.json() as Record<string,unknown>;
+  const zip=String(x.zip||'').trim();
+  const email=String(x.email||'').trim().toLowerCase();
+  const phone=String(x.phone||'').trim();
+  const address=String(x.address||'').trim();
+  const preferredDate=String(x.preferredDate||'').trim();
+  const preferredTime=String(x.preferredTime||'').trim();
+  const item=String(x.item||'');
+  const access=String(x.access||'');
+  const condition=String(x.condition||'');
+  const count=Math.max(1,Math.floor(Number(x.count)||1));
+  const quoted=ownerHandledPrice({zip,item,count,access,condition});
+  const drop=access==='Customer drop-off';
+
+  if(!['02035','02766'].includes(zip))
+    return Response.json({error:'Test checkout is limited to the current owner-handled launch ZIPs'},{status:422});
+  if(!email.includes('@')||phone.replace(/\D/g,'').length<10||!preferredDate||!preferredTime||(!drop&&!address))
+    return Response.json({error:drop?'Email, phone and preferred drop-off date are required':'Email, phone, pickup address and preferred pickup date are required'},{status:400});
+  if(condition!=='Clean and dry'||!['Curbside / garage','Customer drop-off'].includes(access))
+    return Response.json({error:'Test checkout supports clean owner-handled pickup or drop-off offers only'},{status:422});
+  if(quoted==null||Number(x.customerPrice)!==quoted)
+    return Response.json({error:'Test checkout price does not match the current owner-handled quote'},{status:422});
+
+  try{
+    const created=await createMattressTestCheckout({
+      zip,email,phone,address,preferredDate,preferredTime,item,count,access,condition,customerPrice:quoted
+    });
+    if(!created.sessionId||!created.url)
+      return Response.json({error:'Stripe did not return a test checkout session'},{status:502});
+
+    if(process.env.SUPABASE_URL||process.env.POSTGREST_URL){
+      await portableRuntime.db.add('mattress-test-orders',[{
+        sessionId:created.sessionId,zip,email,phone,address:drop?'PRIVATE DROP-OFF LOCATION':address,
+        preferredDate,preferredTime,item,count,access,customerPrice:quoted,
+        status:'test-checkout-created',createdAt:new Date().toISOString()
+      }]);
+    }
+
+    return Response.json({
+      url:created.url,sessionId:created.sessionId,mode:'test',amount:quoted,
+      serviceType:drop?'customer-drop-off':'pickup',liveFunds:false
+    });
+  }catch(error){
+    return Response.json({error:error instanceof Error?error.message:'Could not create Mattress Rescue test checkout'},{status:502});
+  }
 });
 
-route('POST', '/api/mattress-test-confirmation', async () => {
-  return Response.json({
-    error: 'Stripe confirmation is unavailable until payment parity testing is explicitly enabled.',
-    code: 'MIGRATION_PAYMENT_LOCK',
-  }, { status: 423 });
+route('POST', '/api/mattress-test-confirmation', async (request) => {
+  const x=await request.json() as Record<string,unknown>;
+  const sessionId=String(x.sessionId||'').trim();
+  try{
+    const session=await getMattressTestConfirmation(sessionId);
+    const status=String(session.status||'');
+    const pi=session.payment_intent as Record<string,unknown>|null;
+    const piStatus=pi?String(pi.status||''):'';
+    if(status!=='complete'||!['requires_capture','succeeded'].includes(piStatus))
+      return Response.json({error:'Stripe test booking is not complete'},{status:409});
+
+    let order:any=null;
+    if(process.env.SUPABASE_URL||process.env.POSTGREST_URL){
+      const rows=(await portableRuntime.db.list<any>('mattress-test-orders',{limit:100})).items;
+      order=rows.find((r:any)=>r.sessionId===sessionId)||null;
+    }
+
+    const receiptNumber='MR-'+sessionId.slice(-8).toUpperCase();
+    const receipt={
+      receiptNumber,
+      amount:order?.customerPrice ?? Math.round(Number(session.amount_total||0)/100),
+      zip:order?.zip || String((session.metadata as Record<string,unknown>|undefined)?.zip||''),
+      serviceType:order?.access==='Customer drop-off'?'customer-drop-off':'pickup',
+      preferredDate:order?.preferredDate || '',
+      preferredTime:order?.preferredTime || '',
+      paymentMode:'test',
+      paymentStatus:piStatus,
+      captured:false
+    };
+    return Response.json({receipt,testMode:true,liveFunds:false});
+  }catch(error){
+    const message=error instanceof Error?error.message:'Could not load booking confirmation';
+    const status=message.includes('Valid Stripe test session')?400:502;
+    return Response.json({error:message},{status});
+  }
 });
 
 export { handleRequest };
