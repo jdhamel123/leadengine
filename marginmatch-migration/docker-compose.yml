@@ -41,7 +41,10 @@ services:
       MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:?Set MINIO_ROOT_PASSWORD}
 
   app:
-    build: .
+    build:
+      context: .
+      args:
+        VITE_ENABLE_LEGACY_PORTFOLIO: ${VITE_ENABLE_LEGACY_PORTFOLIO:-false}
     restart: unless-stopped
     depends_on:
       db:
