@@ -9,8 +9,8 @@
     "preview": "vite preview",
     "vercel-build": "vite build",
     "start": "tsx server.ts",
-    "test": "tsx tests/portable-api.test.ts",
-    "test:workflow": "tsx tests/portable-workflow.test.ts"
+    "test": "NODE_ENV=test tsx tests/portable-api.test.ts",
+    "test:workflow": "NODE_ENV=test tsx tests/portable-workflow.test.ts"
   },
   "dependencies": {
     "lucide-react": "^0.469.0",
