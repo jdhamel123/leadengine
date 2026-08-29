@@ -1156,6 +1156,39 @@ route('POST', '/api/revenue-lab/tenant', async (request) => {
   return Response.json({id,productionMessagingEnabled:false,status:'active'},{status:201});
 });
 
+route('POST', '/api/revenue-lab/lead/:id/qualify', async (request,params) => {
+  await requirePortableAdmin(request);
+  const [lead]=await portableRuntime.db.get<any>('revenue-lab-leads',[params.id]);
+  if(!lead)return Response.json({error:'Lead not found'},{status:404});
+  const body=await request.json() as Record<string,unknown>;
+  const status=String(body.status||'qualified');
+  if(!['qualified','appointment-requested','won','lost','human-needed'].includes(status))
+    return Response.json({error:'Unsupported lead status'},{status:400});
+  const record={...lead,status,qualification:body.qualification||lead.qualification||{},updatedAt:new Date().toISOString()};
+  delete record.id;
+  await portableRuntime.db.update('revenue-lab-leads',[{id:params.id,record}]);
+  if(status==='won'){
+    await portableRuntime.db.add('revenue-lab-attribution',[{
+      tenantId:lead.tenantId,leadId:params.id,recoveredRevenue:Math.max(0,Number(body.recoveredRevenue||0)),
+      source:'lead-rescue',createdAt:new Date().toISOString()
+    }]);
+  }
+  return Response.json({id:params.id,status});
+});
+
+route('POST', '/api/revenue-lab/lead/:id/opt-out', async (request,params) => {
+  const [lead]=await portableRuntime.db.get<any>('revenue-lab-leads',[params.id]);
+  if(!lead)return Response.json({error:'Lead not found'},{status:404});
+  const record={...lead,status:'opted-out',automationStatus:'suppressed',optedOutAt:new Date().toISOString()};
+  delete record.id;
+  await portableRuntime.db.update('revenue-lab-leads',[{id:params.id,record}]);
+  await portableRuntime.db.add('customer-suppressions',[{
+    phone:String(lead.phone||''),email:String(lead.email||''),tenantId:String(lead.tenantId||''),
+    reason:'lead-rescue-opt-out',createdAt:new Date().toISOString()
+  }]);
+  return Response.json({suppressed:true});
+});
+
 route('GET', '/api/revenue-lab/summary', async (request) => {
   await requirePortableAdmin(request);
   const [tenants,leads,appointments,attribution]=await Promise.all([
