@@ -32,3 +32,19 @@ export async function writeProof(path:string,content:string,contentType:string){
   if(!response.ok) throw new Error('Could not save proof photo: '+response.status+' '+await response.text());
   return {path};
 }
+
+export async function signedProofUrls(paths:string[],expiresIn=3600){
+  const out:Array<{path:string;url:string}>=[];
+  for(const path of paths){
+    const response=await fetch(baseUrl()+'/storage/v1/object/sign/'+encodeURIComponent(bucket())+'/'+path.split('/').map(encodeURIComponent).join('/'),{
+      method:'POST',
+      headers:{Authorization:'Bearer '+key(),apikey:key(),'Content-Type':'application/json'},
+      body:JSON.stringify({expiresIn})
+    });
+    if(!response.ok){out.push({path,url:''});continue;}
+    const data=await response.json() as Record<string,unknown>;
+    const signed=String(data.signedURL||data.signedUrl||'');
+    out.push({path,url:signed?signed.startsWith('http')?signed:baseUrl()+'/storage/v1'+signed:''});
+  }
+  return out;
+}
