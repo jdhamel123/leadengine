@@ -27,11 +27,17 @@ jobs:
       - name: Install dependencies
         run: npm install --no-audit --no-fund
 
+      - name: Typecheck portable runtime
+        run: npm run typecheck
+
       - name: Build frontend
         run: npm run build
 
       - name: Run portable API contract tests
         run: npm test
+
+      - name: Run portable workflow integration harness
+        run: npm run test:workflow
 
       - name: Confirm portable frontend has no AppDeploy client import
         run: |
