@@ -1,4 +1,4 @@
-import { route, handleRequest } from './http-portable';
+import { route, handleRequest as handlePortableRequest } from './http-portable';
 import { portableRuntime } from './portable-runtime';
 import { createMattressTestCheckout, getMattressTestConfirmation } from './stripe-test';
 import { sendMattressConfirmation } from './resend-portable';
@@ -1184,6 +1184,28 @@ route('GET', '/api/owner-cockpit', async (request) => {
   });
 });
 
+route('GET', '/api/legacy-compat-self-test', async (request) => {
+  await requirePortableAdmin(request);
+  try{
+    const legacy=await import('./index');
+    const response=await legacy.handler(new Request('http://portable.local/api/_healthcheck',{method:'GET'}));
+    const body=await response.json().catch(()=>({}));
+    return Response.json({
+      loaded:true,
+      healthStatus:response.status,
+      healthBody:body,
+      trafficEnabled:process.env.ENABLE_LEGACY_PORTABLE_ROUTES==='true',
+      productionActionsUnlocked:false
+    },{status:response.ok?200:500});
+  }catch(error){
+    return Response.json({
+      loaded:false,
+      error:error instanceof Error?error.message:'Legacy compatibility load failed',
+      trafficEnabled:false
+    },{status:500});
+  }
+});
+
 route('GET', '/api/self-test', async (request) => {
   await requirePortableAdmin(request);
   const checks:any[]=[];
@@ -1316,4 +1338,14 @@ route('GET', '/api/portable-exceptions', async (request) => {
   });
 });
 
-export { handleRequest };
+export async function handleRequest(request:Request){
+  const portable=await handlePortableRequest(request);
+  if(portable.status!==404)return portable;
+  if(process.env.ENABLE_LEGACY_PORTABLE_ROUTES!=='true')return portable;
+
+  // Legacy compatibility traffic is opt-in only. The shim keeps auth and
+  // environment-backed secrets in force; production locks in the legacy
+  // business rules remain unchanged.
+  const legacy=await import('./index');
+  return legacy.handler(request);
+}
