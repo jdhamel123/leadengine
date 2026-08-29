@@ -9,7 +9,7 @@ import { postgresDb } from './platform-postgres';
 import { envSecrets } from './secrets-env';
 import { openAiAdapter } from './ai-openai';
 import { resolveUser } from './auth-portable';
-import { writeProof, signedProofUrls } from './storage-supabase';
+import { writePortableObject, signedPortableUrls } from './storage-portable';
 
 type AnyRecord=Record<string,any>;
 type Ctx={request:Request;body:any;params:Record<string,string>;query:Record<string,string>;user?:{id:string;email?:string}};
@@ -71,12 +71,12 @@ export const storage={
   async write(items:Array<{path:string;content:string;contentType:string}>){
     const results:boolean[]=[];
     for(const item of items){
-      try{await writeProof(item.path,item.content,item.contentType);results.push(true);}
+      try{await writePortableObject(item.path,item.content,item.contentType);results.push(true);}
       catch{results.push(false);}
     }
     return results;
   },
-  async url(paths:string[]){return signedProofUrls(paths);}
+  async url(paths:string[]){return signedPortableUrls(paths);}
 };
 
 function matchPath(pattern:string,actual:string){
