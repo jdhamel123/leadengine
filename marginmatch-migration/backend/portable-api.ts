@@ -19,7 +19,8 @@ async function requirePortableAdmin(request:Request){
   return requireAdmin(request);
 }
 
-const launchZips = new Set(['02035','02048','02093','02081','02067','02760','02766']);
+const launchZipTown:Record<string,string>={02035:'Foxborough',02048:'Mansfield',02093:'Wrentham',02081:'Walpole',02067:'Sharon',02760:'North Attleborough',02766:'Norton'};
+const launchZips = new Set(Object.keys(launchZipTown));
 
 function ownerHandledPrice(body: MattressQuoteBody) {
   const zip = String(body.zip || '').trim();
@@ -412,14 +413,14 @@ route('GET', '/api/mattress-suppliers', async (request) => {
     const matches=verified.filter((r:any)=>Array.isArray(r.serviceZips)&&r.serviceZips.includes(zip))
       .sort((a:any,b:any)=>(Number(a.pickupCost)+Number(a.recyclingCost))-(Number(b.pickupCost)+Number(b.recyclingCost)));
     const primary=matches[0],backup=matches[1];
-    if(!primary||!backup)return {zip,routes:matches.length,status:matches.length===1?'BACKUP NEEDED':'BLOCKED',customerPrice:0,safeCost:0,expectedProfit:0,marginPct:0,primary:primary?.company||'',backup:''};
+    if(!primary||!backup)return {zip,town:launchZipTown[zip]||'',routes:matches.length,status:matches.length===1?'BACKUP NEEDED':'BLOCKED',customerPrice:0,safeCost:0,expectedProfit:0,marginPct:0,primary:primary?.company||'',backup:''};
     const safeCost=Math.max(Number(primary.pickupCost)+Number(primary.recyclingCost),Number(backup.pickupCost)+Number(backup.recyclingCost));
     const reserve=15,target=Math.max(35,Math.ceil(safeCost*.3));
     const customerPrice=Math.ceil((safeCost+reserve+target)/.97/5)*5;
     const processing=Math.ceil(customerPrice*.03);
     const expectedProfit=customerPrice-safeCost-processing-reserve;
     const marginPct=Math.round(expectedProfit/customerPrice*100);
-    return {zip,routes:matches.length,status:expectedProfit>=35&&marginPct>=20?'SELLABLE':'MARGIN HOLD',customerPrice,safeCost,expectedProfit,marginPct,primary:primary.company,backup:backup.company};
+    return {zip,town:launchZipTown[zip]||'',routes:matches.length,status:expectedProfit>=35&&marginPct>=20?'SELLABLE':'MARGIN HOLD',customerPrice,safeCost,expectedProfit,marginPct,primary:primary.company,backup:backup.company};
   });
   return Response.json({suppliers:rows,lanes,ready:lanes.filter(x=>x.status==='SELLABLE').length,total:lanes.length,rule:'Two verified routes and protected economics are required before supplier-backed checkout.'});
 });
