@@ -69,6 +69,20 @@ export const postgresDb = {
     };
   },
 
+  async get<T extends RecordValue>(
+    collection: string,
+    ids: string[]
+  ): Promise<Array<(T & { id: string }) | null>> {
+    if (!ids.length) return [];
+    const rows = (await request(
+      '/rest/v1/platform_records?collection=eq.' + encode(collection) +
+      '&id=in.(' + ids.map(encode).join(',') + ')' +
+      '&select=id,record'
+    )) as PostgrestRow[];
+    const byId = new Map(rows.map((row) => [row.id, { ...(row.record as T), id: row.id }]));
+    return ids.map((id) => byId.get(id) || null);
+  },
+
   async add<T extends RecordValue>(
     collection: string,
     records: T[]
