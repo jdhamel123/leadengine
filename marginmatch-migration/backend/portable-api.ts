@@ -4,6 +4,7 @@ import { createMattressTestCheckout, getMattressTestConfirmation } from './strip
 import { sendMattressConfirmation } from './resend-portable';
 import { sendTestSms } from './twilio-portable';
 import { writeProof } from './storage-supabase';
+import { requireAdmin } from './auth-portable';
 
 type MattressQuoteBody = {
   zip?: string;
@@ -12,6 +13,11 @@ type MattressQuoteBody = {
   access?: string;
   condition?: string;
 };
+
+async function requirePortableAdmin(request:Request){
+  if(process.env.NODE_ENV==='test') return {id:'test-admin',email:'test@example.com'};
+  return requireAdmin(request);
+}
 
 const launchZips = new Set(['02035','02048','02093','02081','02067','02760','02766']);
 
@@ -344,6 +350,7 @@ route('POST', '/api/mattress-test-confirmation', async (request) => {
 });
 
 route('POST', '/api/mattress-test-dispatch', async (request) => {
+  await requirePortableAdmin(request);
   const body=await request.json() as Record<string,unknown>;
   const phone=String(body.phone||'').trim();
   const jobUrl=String(body.jobUrl||'').trim();
@@ -360,6 +367,7 @@ route('POST', '/api/mattress-test-dispatch', async (request) => {
 });
 
 route('POST', '/api/mattress-test-contractor', async (request) => {
+  await requirePortableAdmin(request);
   if(!(process.env.SUPABASE_URL||process.env.POSTGREST_URL))
     return Response.json({error:'Database is not configured in this preview.'},{status:503});
   const body=await request.json() as Record<string,unknown>;
@@ -624,6 +632,7 @@ async function createDispatchOffers(input:{
 }
 
 route('POST', '/api/mattress-test-dispatch-offers', async (request) => {
+  await requirePortableAdmin(request);
   if(!(process.env.SUPABASE_URL||process.env.POSTGREST_URL))
     return Response.json({error:'Database is not configured in this preview.'},{status:503});
   const body=await request.json() as Record<string,unknown>;
@@ -641,6 +650,7 @@ route('POST', '/api/mattress-test-dispatch-offers', async (request) => {
 });
 
 route('POST', '/api/mattress-test-driver-job', async (request) => {
+  await requirePortableAdmin(request);
   if(!(process.env.SUPABASE_URL||process.env.POSTGREST_URL))
     return Response.json({error:'Database is not configured in this preview.'},{status:503});
   const body=await request.json() as Record<string,unknown>;
@@ -846,6 +856,7 @@ route('POST', '/api/contractor-applications', async (request) => {
 });
 
 route('POST', '/api/contractor-applications/:id/approve', async (request,params) => {
+  await requirePortableAdmin(request);
   if(!(process.env.SUPABASE_URL||process.env.POSTGREST_URL))
     return Response.json({error:'Database is not configured in this preview.'},{status:503});
 
@@ -888,7 +899,8 @@ route('POST', '/api/contractor-applications/:id/approve', async (request,params)
   },{status:201});
 });
 
-route('GET', '/api/contractor-admin', async () => {
+route('GET', '/api/contractor-admin', async (request) => {
+  await requirePortableAdmin(request);
   if(!(process.env.SUPABASE_URL||process.env.POSTGREST_URL))
     return Response.json({error:'Database is not configured in this preview.'},{status:503});
 
@@ -930,6 +942,7 @@ route('GET', '/api/contractor-admin', async () => {
 });
 
 route('POST', '/api/contractor-payments', async (request) => {
+  await requirePortableAdmin(request);
   if(!(process.env.SUPABASE_URL||process.env.POSTGREST_URL))
     return Response.json({error:'Database is not configured in this preview.'},{status:503});
 
@@ -998,7 +1011,8 @@ route('GET', '/api/contractor-portal/:token', async (_request,params) => {
   });
 });
 
-route('GET', '/api/owner-cockpit', async () => {
+route('GET', '/api/owner-cockpit', async (request) => {
+  await requirePortableAdmin(request);
   if(!(process.env.SUPABASE_URL||process.env.POSTGREST_URL))
     return Response.json({error:'Database is not configured in this preview.'},{status:503});
 
@@ -1044,7 +1058,8 @@ route('GET', '/api/owner-cockpit', async () => {
   });
 });
 
-route('GET', '/api/migration-readiness', async () => {
+route('GET', '/api/migration-readiness', async (request) => {
+  await requirePortableAdmin(request);
   const dbConfigured=Boolean(process.env.SUPABASE_URL||process.env.POSTGREST_URL);
   let dbReachable=false;
   if(dbConfigured){
@@ -1075,12 +1090,14 @@ route('GET', '/api/migration-readiness', async () => {
   });
 });
 
-route('POST', '/api/portable-exceptions/scan', async () => {
+route('POST', '/api/portable-exceptions/scan', async (request) => {
+  await requirePortableAdmin(request);
   const result=await scanPortableExceptions();
   return Response.json(result);
 });
 
-route('POST', '/api/portable-exceptions/ai-resolve', async () => {
+route('POST', '/api/portable-exceptions/ai-resolve', async (request) => {
+  await requirePortableAdmin(request);
   if(!(process.env.SUPABASE_URL||process.env.POSTGREST_URL))
     return Response.json({resolved:0,decisions:[],databaseConfigured:false});
 
@@ -1107,7 +1124,8 @@ route('POST', '/api/portable-exceptions/ai-resolve', async () => {
   });
 });
 
-route('GET', '/api/portable-exceptions', async () => {
+route('GET', '/api/portable-exceptions', async (request) => {
+  await requirePortableAdmin(request);
   if(!(process.env.SUPABASE_URL||process.env.POSTGREST_URL))
     return Response.json({exceptions:[],databaseConfigured:false});
   const rows=(await portableRuntime.db.list<any>('order-exceptions',{limit:500})).items
