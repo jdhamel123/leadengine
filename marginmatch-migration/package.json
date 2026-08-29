@@ -11,7 +11,10 @@
     "start": "tsx server.ts",
     "test": "NODE_ENV=test tsx tests/portable-api.test.ts",
     "test:workflow": "NODE_ENV=test tsx tests/portable-workflow.test.ts",
-    "typecheck": "tsc -p tsconfig.portable.json"
+    "typecheck": "tsc -p tsconfig.portable.json",
+    "migrate:import": "tsx scripts/import-snapshot.ts",
+    "migrate:export": "tsx scripts/export-portable-snapshot.ts",
+    "migrate:reconcile": "tsx scripts/reconcile-snapshot.ts"
   },
   "dependencies": {
     "lucide-react": "^0.469.0",
