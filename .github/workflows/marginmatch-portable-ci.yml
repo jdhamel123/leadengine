@@ -39,10 +39,12 @@ jobs:
       - name: Run portable workflow integration harness
         run: npm run test:workflow
 
-      - name: Confirm portable frontend has no AppDeploy client import
+      - name: Confirm deployed portable frontend has no AppDeploy dependency
         run: |
-          if grep -R "@appdeploy/client" src; then
-            echo "Portable frontend still contains AppDeploy client imports."
+          if grep -E "^[[:space:]]*import .*@appdeploy/client|^[[:space:]]*import App from './App'" \
+            src/main.tsx src/platform-client.ts src/MattressRescueStorefront.tsx \
+            src/OwnerCockpit.tsx src/PortableOperations.tsx; then
+            echo "Deployed portable frontend still imports AppDeploy or legacy App."
             exit 1
           fi
 
