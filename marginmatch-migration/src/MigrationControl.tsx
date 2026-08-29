@@ -12,9 +12,19 @@ type Readiness={
 export function MigrationControl(){
   const[data,setData]=useState<Readiness|null>(null);
   const[msg,setMsg]=useState('Loading migration readiness…');
+  const[testMsg,setTestMsg]=useState('');
   async function load(){
     try{const r=await api.get('/api/migration-readiness');setData(r.data);setMsg('');}
     catch(e:any){setData(null);setMsg(e?.message||'Owner access required.');}
+  }
+  async function runSelfTests(){
+    setTestMsg('Running portable core and legacy compatibility tests…');
+    try{
+      const core=await api.get('/api/self-test');
+      const legacy=await api.get('/api/legacy-compat-self-test');
+      setTestMsg('Core: '+(core.data.pass?'PASS':'CHECKS FAILED')+' · Legacy shim: '+(legacy.data.loaded&&legacy.data.healthStatus===200?'PASS':'FAILED')+' · Legacy traffic remains '+(legacy.data.trafficEnabled?'ENABLED':'DISABLED'));
+      await load();
+    }catch(e:any){setTestMsg(e?.message||'Self-test failed');}
   }
   useEffect(()=>{load()},[]);
   if(!data)return <div className='min-h-screen bg-slate-950 p-4 text-white'><div className='mx-auto mt-20 max-w-md rounded-3xl bg-slate-900 p-6 text-center'><h1 className='text-2xl font-black'>Migration Control</h1><p className='mt-3 text-slate-400'>{msg}</p>{!auth.isSignedIn()&&<button onClick={()=>auth.signIn()} className='mt-5 rounded-xl bg-emerald-400 px-5 py-3 font-black text-slate-950'>Sign in</button>}</div></div>;
@@ -64,11 +74,12 @@ export function MigrationControl(){
       </div>
     </section>
 
+    {testMsg&&<div className='mt-4 rounded-2xl border border-violet-400/20 bg-violet-950/30 p-4 text-sm text-violet-100'>{testMsg}</div>}
     <div className='mt-4 grid gap-3 sm:grid-cols-4'>
       <a href='#owner' className='rounded-2xl bg-emerald-400 p-4 text-center font-black text-slate-950'>Owner Cockpit</a>
       <a href='#control-center' className='rounded-2xl bg-orange-400 p-4 text-center font-black text-slate-950'>Operations</a>
       <a href='#exceptions' className='rounded-2xl bg-amber-300 p-4 text-center font-black text-slate-950'>Exceptions</a>
-      <button onClick={load} className='rounded-2xl bg-blue-400 p-4 text-center font-black text-slate-950'>Refresh</button>
+      <button onClick={runSelfTests} className='rounded-2xl bg-violet-300 p-4 text-center font-black text-slate-950'>Run self-tests</button>
     </div>
   </div></div>;
 }
