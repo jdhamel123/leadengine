@@ -86,6 +86,22 @@ route('GET', '/api/health', async () => {
   return Response.json(checks);
 });
 
+route('POST', '/api/analytics-event', async (request) => {
+  if(!(process.env.SUPABASE_URL||process.env.POSTGREST_URL))
+    return Response.json({recorded:false,databaseConfigured:false},{status:202});
+  const body=await request.json() as Record<string,unknown>;
+  if(String(body.type||'')!=='pageview') return Response.json({error:'Unsupported analytics event'},{status:400});
+  const host=String(body.host||'').toLowerCase().replace(/^www\./,'').slice(0,120);
+  const allowed=new Set(['marginmatch.net','dumpsterhound.com','mattressrescue.com','handledstays.com','rackandrivet.com','localhost','127.0.0.1']);
+  if(!allowed.has(host) && !host.endsWith('.vercel.app'))
+    return Response.json({error:'Unsupported host'},{status:422});
+  const [id]=await portableRuntime.db.add('analytics-events',[{
+    type:'pageview',host,path:String(body.path||'/').slice(0,200),
+    referrer:String(body.referrer||'').slice(0,300),createdAt:new Date().toISOString(),runtime:'portable'
+  }]);
+  return Response.json({recorded:Boolean(id),id},{status:id?201:500});
+});
+
 route('POST', '/api/mattress-quote', async (request) => {
   const body = await request.json() as MattressQuoteBody;
   const zip = String(body.zip || '').trim();
@@ -1028,6 +1044,46 @@ route('GET', '/api/contractor-portal/:token', async (_request,params) => {
     summary:{ytdEarned,ytdPaid,owed:Math.max(0,ytdEarned-ytdPaid),completedJobs:jobs.length},
     jobs,payments,
     testMode:Boolean(profile.testMode)
+  });
+});
+
+route('GET', '/api/portable-operations', async (request) => {
+  await requirePortableAdmin(request);
+  if(!(process.env.SUPABASE_URL||process.env.POSTGREST_URL))
+    return Response.json({error:'Database is not configured in this preview.'},{status:503});
+
+  const [leads,orders,dispatches,exceptions,profiles,payments]=await Promise.all([
+    portableRuntime.db.list<any>('customer-leads',{limit:500}),
+    portableRuntime.db.list<any>('mattress-test-orders',{limit:500}),
+    portableRuntime.db.list<any>('mattress-driver-dispatches',{limit:500}),
+    portableRuntime.db.list<any>('order-exceptions',{limit:500}),
+    portableRuntime.db.list<any>('mattress-driver-profiles',{limit:200}),
+    portableRuntime.db.list<any>('contractor-payments',{limit:500})
+  ]);
+  const year=String(new Date().getFullYear());
+  const approved=profiles.items.filter((p:any)=>p.contractorApproved===true);
+  const contractorOwed=approved.reduce((total:number,p:any)=>{
+    const earned=dispatches.items.filter((d:any)=>String(d.driverProfileId||'')===String(p.id)&&String(d.status||'')==='completed'&&String(d.completedAt||'').startsWith(year))
+      .reduce((n:number,d:any)=>n+Number(d.compensationAmount||p.payPerJob||0),0);
+    const paid=payments.items.filter((x:any)=>String(x.driverProfileId||'')===String(p.id)&&String(x.paidAt||'').startsWith(year))
+      .reduce((n:number,x:any)=>n+Number(x.amount||0),0);
+    return total+Math.max(0,earned-paid);
+  },0);
+  const openExceptions=exceptions.items.filter((x:any)=>String(x.status||'')!=='resolved');
+  const active=dispatches.items.filter((d:any)=>!['completed','declined','superseded','expired'].includes(String(d.status||'')));
+  return Response.json({
+    summary:{
+      leads:leads.items.length,
+      testOrders:orders.items.length,
+      dispatches:dispatches.items.length,
+      activeDispatches:active.length,
+      completedDispatches:dispatches.items.filter((d:any)=>String(d.status||'')==='completed').length,
+      openExceptions:openExceptions.length,
+      approvedContractors:approved.length,
+      contractorOwed
+    },
+    recentDispatches:dispatches.items.sort((a:any,b:any)=>String(b.createdAt||'').localeCompare(String(a.createdAt||''))).slice(0,15),
+    recentExceptions:openExceptions.sort((a:any,b:any)=>String(b.updatedAt||b.createdAt||'').localeCompare(String(a.updatedAt||a.createdAt||''))).slice(0,15)
   });
 });
 
