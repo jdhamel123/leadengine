@@ -101,3 +101,14 @@ live AppDeploy sites.
 8. Only after all checks pass, move Mattress Rescue DNS.
 9. Test the legacy compatibility shim.
 10. Migrate remaining brands one at a time.
+
+
+## Snapshot migration tooling
+
+The portable repository now includes:
+- `npm run migrate:import -- snapshot.json`
+- `npm run migrate:export -- backup.json`
+- `npm run migrate:reconcile -- snapshot.json`
+
+Reconciliation verifies both per-collection record counts and canonical SHA-256
+content hashes. Source AppDeploy data must remain intact for rollback.
