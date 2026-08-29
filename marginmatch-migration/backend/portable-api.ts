@@ -998,6 +998,83 @@ route('GET', '/api/contractor-portal/:token', async (_request,params) => {
   });
 });
 
+route('GET', '/api/owner-cockpit', async () => {
+  if(!(process.env.SUPABASE_URL||process.env.POSTGREST_URL))
+    return Response.json({error:'Database is not configured in this preview.'},{status:503});
+
+  const [orders,mattress,dispatches,exceptions,profiles,payments]=await Promise.all([
+    portableRuntime.db.list<any>('orders',{limit:300}),
+    portableRuntime.db.list<any>('mattress-test-orders',{limit:300}),
+    portableRuntime.db.list<any>('mattress-driver-dispatches',{limit:500}),
+    portableRuntime.db.list<any>('order-exceptions',{limit:500}),
+    portableRuntime.db.list<any>('mattress-driver-profiles',{limit:200}),
+    portableRuntime.db.list<any>('contractor-payments',{limit:500})
+  ]);
+  const year=String(new Date().getFullYear());
+  const openExceptions=exceptions.items.filter((x:any)=>String(x.status||'')!=='resolved');
+  const approved=profiles.items.filter((x:any)=>x.contractorApproved===true);
+  const contractorPayables=approved.map((p:any)=>{
+    const jobs=dispatches.items.filter((d:any)=>String(d.driverProfileId||'')===String(p.id)&&String(d.status||'')==='completed'&&String(d.completedAt||'').startsWith(year));
+    const earned=jobs.reduce((n:number,j:any)=>n+Number(j.compensationAmount||p.payPerJob||0),0);
+    const paid=payments.items.filter((x:any)=>String(x.driverProfileId||'')===String(p.id)&&String(x.paidAt||'').startsWith(year))
+      .reduce((n:number,x:any)=>n+Number(x.amount||0),0);
+    return {id:p.id,name:p.name,completedJobs:jobs.length,owed:Math.max(0,earned-paid)};
+  }).filter((x:any)=>x.owed>0).sort((a:any,b:any)=>b.owed-a.owed);
+
+  const brands=[
+    {brand:'Dumpster Hound',jobs:orders.items.length,active:orders.items.filter((o:any)=>!['Completed','Profit Recorded','Cancelled'].includes(String(o.status||''))).length},
+    {brand:'Mattress Rescue',jobs:mattress.items.length,active:mattress.items.filter((o:any)=>!['completed','cancelled'].includes(String(o.status||''))).length}
+  ];
+
+  const mattressRevenue=mattress.items.reduce((n:number,o:any)=>n+Number(o.customerPrice||0),0);
+  const dumpsterRevenue=orders.items.filter((o:any)=>!['Cancelled'].includes(String(o.status||''))).reduce((n:number,o:any)=>n+Number(o.customerPrice||0),0);
+  const projectedProfit=orders.items.filter((o:any)=>!['Cancelled'].includes(String(o.status||''))).reduce((n:number,o:any)=>n+Number(o.projectedProfit||0),0);
+
+  return Response.json({
+    summary:{
+      revenue:mattressRevenue+dumpsterRevenue,
+      projectedProfit,
+      activeJobs:brands.reduce((n:number,b:any)=>n+b.active,0),
+      exceptionCount:openExceptions.length
+    },
+    exceptions:openExceptions.sort((a:any,b:any)=>String(b.updatedAt||b.createdAt||'').localeCompare(String(a.updatedAt||a.createdAt||''))),
+    contractorPayables,
+    brands,
+    runtime:'portable'
+  });
+});
+
+route('GET', '/api/migration-readiness', async () => {
+  const dbConfigured=Boolean(process.env.SUPABASE_URL||process.env.POSTGREST_URL);
+  let dbReachable=false;
+  if(dbConfigured){
+    try{await portableRuntime.db.list('ops-health',{limit:1});dbReachable=true;}catch{}
+  }
+  const checks=[
+    {id:'frontend',label:'Portable frontend client',pass:true},
+    {id:'api',label:'Portable HTTP/API runtime',pass:true},
+    {id:'database-config',label:'Database configured',pass:dbConfigured},
+    {id:'database-reachable',label:'Database reachable',pass:dbReachable},
+    {id:'stripe-test',label:'Stripe test key configured',pass:Boolean((process.env.STRIPE_RESTRICTED_KEY||process.env.STRIPE_SECRET_KEY||'').includes('_test_'))},
+    {id:'email',label:'Resend configured',pass:Boolean(process.env.RESEND_API_KEY)},
+    {id:'sms',label:'Twilio configured',pass:Boolean(process.env.TWILIO_ACCOUNT_SID&&process.env.TWILIO_AUTH_TOKEN&&process.env.TWILIO_FROM_NUMBER)},
+    {id:'storage',label:'Proof storage configured',pass:Boolean(process.env.SUPABASE_URL&&process.env.SUPABASE_SERVICE_ROLE_KEY&&process.env.SUPABASE_PROOF_BUCKET)},
+    {id:'ai',label:'AI configured',pass:Boolean(process.env.OPENAI_API_KEY)},
+    {id:'auth',label:'Auth verifier configured',pass:Boolean(process.env.AUTH_VERIFY_URL)},
+    {id:'public-url',label:'Portable public URL configured',pass:Boolean(process.env.PORTABLE_PUBLIC_URL)}
+  ];
+  const blocking=checks.filter(x=>!x.pass).map(x=>x.id);
+  return Response.json({
+    checks,
+    readyForIndependentPreview:blocking.filter(x=>!['email','sms','ai','auth'].includes(x)).length===0,
+    readyForDomainCutover:blocking.length===0,
+    productionPaymentsUnlocked:false,
+    productionMessagingUnlocked:false,
+    appDeployRequiredForPortableRuntime:false,
+    blocking
+  });
+});
+
 route('POST', '/api/portable-exceptions/scan', async () => {
   const result=await scanPortableExceptions();
   return Response.json(result);
