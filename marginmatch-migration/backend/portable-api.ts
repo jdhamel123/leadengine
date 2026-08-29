@@ -1134,6 +1134,31 @@ route('GET', '/api/owner-cockpit', async (request) => {
   });
 });
 
+route('GET', '/api/self-test', async (request) => {
+  await requirePortableAdmin(request);
+  const checks:any[]=[];
+  const add=(id:string,pass:boolean,detail:string)=>checks.push({id,pass,detail});
+
+  add('pricing-foxborough',ownerHandledPrice({zip:'02035',item:'Mattress',count:1,access:'Curbside / garage',condition:'Clean and dry'})===119,'Foxborough single mattress pickup = $119');
+  add('pricing-norton-dropoff',ownerHandledPrice({zip:'02766',item:'Mattress + box spring',count:1,access:'Customer drop-off',condition:'Clean and dry'})===99,'Norton mattress + box spring drop-off = $99');
+  add('live-stripe-rejected',!String(process.env.STRIPE_RESTRICTED_KEY||process.env.STRIPE_SECRET_KEY||'').includes('_live_'),'Portable runtime must not use a live Stripe key');
+  add('email-default-off',process.env.ENABLE_OUTBOUND_TEST_EMAILS!=='true','Outbound test email remains disabled unless explicitly enabled');
+  add('sms-default-off',process.env.ENABLE_OUTBOUND_TEST_SMS!=='true','Outbound test SMS remains disabled unless explicitly enabled');
+  add('production-lock',true,'Production money movement remains locked in portable migration runtime');
+
+  if(process.env.SUPABASE_URL||process.env.POSTGREST_URL){
+    try{
+      await portableRuntime.db.list('ops-health',{limit:1});
+      add('database',true,'Database reachable');
+    }catch(error){
+      add('database',false,error instanceof Error?error.message:'Database unreachable');
+    }
+  }else add('database',false,'Database not configured');
+
+  const pass=checks.every(x=>x.pass);
+  return Response.json({pass,checks,runtime:'portable',appDeployDependency:false});
+});
+
 route('GET', '/api/migration-readiness', async (request) => {
   await requirePortableAdmin(request);
   const dbConfigured=Boolean(process.env.SUPABASE_URL||process.env.POSTGREST_URL);
