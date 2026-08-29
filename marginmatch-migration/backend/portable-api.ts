@@ -348,6 +348,62 @@ route('POST', '/api/mattress-test-contractor', async (request) => {
   return Response.json({created:true,id,token,portalUrl,profile:{...profile,id}},{status:201});
 });
 
+route('POST', '/api/mattress-test-dispatch-offers', async (request) => {
+  if(!(process.env.SUPABASE_URL||process.env.POSTGREST_URL))
+    return Response.json({error:'Database is not configured in this preview.'},{status:503});
+
+  const body=await request.json() as Record<string,unknown>;
+  const zip=String(body.zip||'').trim();
+  const address=String(body.address||'').trim();
+  const item=String(body.item||'Mattress').trim();
+  const count=Math.max(1,Math.floor(Number(body.count)||1));
+  const serviceDate=String(body.serviceDate||'').trim();
+  const preferredTime=String(body.preferredTime||'').trim();
+  const orderRef=String(body.orderRef||crypto.randomUUID());
+  if(!/^[0-9]{5}$/.test(zip)||!address)
+    return Response.json({error:'Valid service ZIP and pickup address are required'},{status:400});
+
+  const profiles=(await portableRuntime.db.list<any>('mattress-driver-profiles',{limit:200})).items
+    .filter((p:any)=>p.contractorApproved===true && Array.isArray(p.serviceZips) && p.serviceZips.includes(zip))
+    .sort((a:any,b:any)=>Number(a.priority||10)-Number(b.priority||10)||String(a.name||'').localeCompare(String(b.name||'')));
+
+  if(!profiles.length)
+    return Response.json({offered:0,offers:[],matched:false,error:'No approved contractors cover this ZIP'},{status:422});
+
+  const existing=(await portableRuntime.db.list<any>('mattress-driver-dispatches',{limit:500})).items
+    .filter((d:any)=>String(d.orderRef||'')===orderRef && !['declined','superseded','expired'].includes(String(d.status||'')));
+
+  if(existing.some((d:any)=>String(d.status||'')==='accepted'))
+    return Response.json({error:'A contractor has already accepted this order'},{status:409});
+
+  const offers:any[]=[];
+  for(const p of profiles){
+    if(existing.some((d:any)=>String(d.driverProfileId||'')===String(p.id))) continue;
+    const token=crypto.randomUUID();
+    const record={
+      orderRef,status:'offered',token,driverPhone:String(p.phone||''),driverName:String(p.name||'Driver'),
+      driverProfileId:String(p.id||''),item,count,address,zip,serviceDate,preferredTime,
+      pickupPhotoPath:'',completionPhotoPath:'',compensationAmount:0,compensationRecordedAt:'',
+      createdAt:new Date().toISOString(),testMode:true
+    };
+    const [id]=await portableRuntime.db.add('mattress-driver-dispatches',[record]);
+    if(!id) continue;
+    const jobUrl=(process.env.PORTABLE_PUBLIC_URL||'http://localhost:3000')+'/#driver-job='+token;
+    let smsSent=false;
+    try{
+      if(p.phone){
+        const sent=await sendTestSms(String(p.phone),'Mattress Rescue TEST job offer: '+item+' × '+count+', ZIP '+zip+', '+(serviceDate||'date TBD')+' '+(preferredTime||'')+'. First approved contractor to accept gets the job: '+jobUrl);
+        smsSent=Boolean(sent.sid);
+      }
+    }catch(error){
+      console.warn('Migration driver offer SMS skipped:',error instanceof Error?error.message:'unknown');
+    }
+    offers.push({id,driverProfileId:p.id,driverName:p.name,jobUrl,smsSent,status:'offered'});
+  }
+
+  return Response.json({offered:offers.length,offers,matched:offers.length>0,orderRef,testMode:true});
+});
+
 route('POST', '/api/mattress-test-driver-job', async (request) => {
   if(!(process.env.SUPABASE_URL||process.env.POSTGREST_URL))
     return Response.json({error:'Database is not configured in this preview.'},{status:503});
@@ -406,11 +462,33 @@ route('POST', '/api/mattress-driver-job/:token/respond', async (request,params) 
   if(!d) return Response.json({error:'Driver job link is invalid'},{status:404});
   if(!['offered','text-sent'].includes(String(d.status||'')))
     return Response.json({error:'Job is no longer awaiting a response'},{status:409});
+  if(decision==='accept' && d.orderRef){
+    const winner=rows.find((x:any)=>
+      String(x.orderRef||'')===String(d.orderRef||'') &&
+      String(x.id||'')!==String(d.id||'') &&
+      String(x.status||'')==='accepted'
+    );
+    if(winner) return Response.json({error:'Another contractor already accepted this job'},{status:409});
+  }
+
   const record={...d,status:decision==='accept'?'accepted':'declined',
     [decision==='accept'?'acceptedAt':'declinedAt']:new Date().toISOString()};
   delete (record as any).id;
   await portableRuntime.db.update('mattress-driver-dispatches',[{id:d.id,record}]);
-  return Response.json({status:record.status});
+
+  if(decision==='accept' && d.orderRef){
+    for(const sibling of rows.filter((x:any)=>
+      String(x.orderRef||'')===String(d.orderRef||'') &&
+      String(x.id||'')!==String(d.id||'') &&
+      String(x.status||'')==='offered'
+    )){
+      const superseded={...sibling,status:'superseded',supersededAt:new Date().toISOString()};
+      delete (superseded as any).id;
+      await portableRuntime.db.update('mattress-driver-dispatches',[{id:sibling.id,record:superseded}]);
+    }
+  }
+
+  return Response.json({status:record.status,firstAccepted:decision==='accept'});
 });
 
 route('POST', '/api/mattress-driver-job/:token/progress', async (request,params) => {
