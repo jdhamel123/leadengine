@@ -107,6 +107,21 @@ export const postgresDb={
     return results;
   },
 
+  async claimDispatchOffer(collection:string,offerId:string,orderRef:string):Promise<{won:boolean;reason:string}>{
+    const p=directPool();
+    if(p){
+      const q=await p.query('select * from claim_dispatch_offer($1,$2::uuid,$3)',[collection,offerId,orderRef]);
+      const row=q.rows[0]||{};
+      return {won:Boolean(row.won),reason:String(row.reason||'unknown')};
+    }
+    const rows=await restRequest('/rest/v1/rpc/claim_dispatch_offer',{
+      method:'POST',
+      body:JSON.stringify({p_collection:collection,p_offer_id:offerId,p_order_ref:orderRef})
+    }) as Array<{won:boolean;reason:string}>;
+    const row=rows[0]||{won:false,reason:'unknown'};
+    return {won:Boolean(row.won),reason:String(row.reason||'unknown')};
+  },
+
   async importRecords(collection:string,records:Array<RecordValue&{id?:string}>):Promise<number>{
     if(!records.length)return 0;
     const p=directPool();
