@@ -1,6 +1,7 @@
 import { route, handleRequest as handlePortableRequest } from './http-portable';
 import { portableRuntime } from './portable-runtime';
 import { createMattressTestCheckout, getMattressTestConfirmation } from './stripe-test';
+import { createMattressLiveCheckout, getMattressLiveCheckout } from './stripe-live';
 import { sendMattressConfirmation } from './resend-portable';
 import { sendTestSms } from './twilio-portable';
 import { writePortableObject, portableStorageMode } from './storage-portable';
@@ -76,7 +77,7 @@ route('GET', '/api/release', async () => {
     commit:process.env.GIT_COMMIT||process.env.GITHUB_SHA||'unknown',
     runtime:'portable',
     legacyTrafficEnabled:process.env.ENABLE_LEGACY_PORTABLE_ROUTES==='true',
-    productionPaymentsUnlocked:false,
+    productionPaymentsUnlocked:process.env.ENABLE_LIVE_MATTRESS_PAYMENTS==='true',
     productionMessagingUnlocked:false
   });
 });
@@ -269,6 +270,31 @@ route('POST', '/api/leads', async (request) => {
   const [id] = await portableRuntime.db.add('customer-leads', [record]);
   if (!id) return Response.json({ error: 'Could not save lead' }, { status: 500 });
   return Response.json({ id, attribution }, { status: 201 });
+});
+
+route('POST', '/api/mattress-live-checkout', async (request) => {
+ if(process.env.ENABLE_LIVE_MATTRESS_PAYMENTS!=='true')return Response.json({error:'Live payments are not enabled on this deployment'},{status:503});
+ if(!databaseConfigured())return Response.json({error:'Database is required for live checkout'},{status:503});
+ const x=await request.json() as Record<string,unknown>,zip=String(x.zip||'').trim(),email=String(x.email||'').trim().toLowerCase(),phone=String(x.phone||'').trim(),address=String(x.address||'').trim(),preferredDate=String(x.preferredDate||'').trim(),preferredTime=String(x.preferredTime||'').trim(),item=String(x.item||''),access=String(x.access||''),condition=String(x.condition||''),count=Math.max(1,Math.floor(Number(x.count)||1)),drop=access==='Customer drop-off';
+ const quoted=ownerHandledPrice({zip,item,count,access,condition});
+ if(!['02035','02766'].includes(zip)||quoted==null)return Response.json({error:'This order is not eligible for owner-fulfilled live checkout'},{status:422});
+ if(!email.includes('@')||phone.replace(/\D/g,'').length<10||!preferredDate||!preferredTime||(!drop&&!address))return Response.json({error:'Complete contact, address, date and time details before payment'},{status:400});
+ const [orderId]=await portableRuntime.db.add('mattress-orders',[{zip,email,phone,address:drop?'PRIVATE DROP-OFF LOCATION':address,preferredDate,preferredTime,item,count,access,condition,customerPrice:quoted,status:'checkout-pending',paymentStatus:'unpaid',createdAt:new Date().toISOString()}]);
+ if(!orderId)return Response.json({error:'Could not create order'},{status:500});
+ try{const created=await createMattressLiveCheckout({orderId,zip,email,phone,address,preferredDate,preferredTime,item,count,access,customerPrice:quoted});
+  const [o]=await portableRuntime.db.get<any>('mattress-orders',[orderId]);const record={...o,stripeSessionId:created.sessionId,status:'checkout-created',updatedAt:new Date().toISOString()};delete record.id;await portableRuntime.db.update('mattress-orders',[{id:orderId,record}]);
+  return Response.json({url:created.url,sessionId:created.sessionId,orderId,amount:quoted,mode:'live'});
+ }catch(error){return Response.json({error:error instanceof Error?error.message:'Could not create live checkout'},{status:502})}
+});
+
+route('POST', '/api/mattress-live-confirmation', async (request) => {
+ if(process.env.ENABLE_LIVE_MATTRESS_PAYMENTS!=='true')return Response.json({error:'Live payments are not enabled'},{status:503});
+ const x=await request.json() as Record<string,unknown>,sessionId=String(x.sessionId||'');
+ try{const s=await getMattressLiveCheckout(sessionId);if(String(s.payment_status)!=='paid')return Response.json({paid:false,status:String(s.payment_status||'unknown')},{status:409});
+  const orderId=String((s.metadata||{}).order_id||'');const [o]=await portableRuntime.db.get<any>('mattress-orders',[orderId]);if(!o)return Response.json({error:'Paid order record not found'},{status:404});
+  if(o.paymentStatus!=='paid'){const record={...o,paymentStatus:'paid',status:'paid-awaiting-fulfillment',paidAt:new Date().toISOString(),stripePaymentIntent:String(s.payment_intent||'')};delete record.id;await portableRuntime.db.update('mattress-orders',[{id:orderId,record}]);await audit({kind:'payment',action:'mattress-paid',status:'ok',actor:o.email,detail:{orderId,sessionId,amount:o.customerPrice}});}
+  return Response.json({paid:true,orderId,amount:o.customerPrice,status:'paid-awaiting-fulfillment'});
+ }catch(error){return Response.json({error:error instanceof Error?error.message:'Could not verify payment'},{status:502})}
 });
 
 route('POST', '/api/mattress-test-checkout', async (request) => {
