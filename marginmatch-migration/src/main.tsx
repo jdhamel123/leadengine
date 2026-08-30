@@ -1,4 +1,4 @@
-import { StrictMode } from 'react';
+import { StrictMode, useEffect, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import { api } from './platform-client';
 import { DriverJob } from './DriverJob';
@@ -21,8 +21,39 @@ import { DeadQuoteRecovery } from './DeadQuoteRecovery';
 import { PastCustomerReactivation } from './PastCustomerReactivation';
 import './index.css';
 
-const h=window.location.hostname.toLowerCase().replace(/^www\./,'');const key=`mm-view:${h}:${window.location.pathname}`;if(!sessionStorage.getItem(key)){sessionStorage.setItem(key,'1');api.post('/api/analytics-event',{type:'pageview',host:h,path:window.location.pathname,referrer:document.referrer.slice(0,300)}).catch(()=>{});}createRoot(document.getElementById('root')!).render(
-    <StrictMode>
-        {window.location.hash==='#portable-login'?<PortableLogin/>:window.location.hash==='#migration'?<MigrationControl/>:window.location.hash==='#data-migration'?<DataMigration/>:window.location.hash==='#system-health'?<SystemHealth/>:window.location.hash==='#revenue-lab'?<RevenueLab/>:window.location.hash==='#profit-factory'?<ProfitFactory/>:window.location.hash==='#dead-quotes'?<DeadQuoteRecovery/>:window.location.hash==='#reactivation'?<PastCustomerReactivation/>:window.location.hash.startsWith('#driver-job=')?<DriverJob/>:window.location.hash.startsWith('#contractor=')?<ContractorPortal/>:window.location.hash==='#contractor-apply'?<ContractorApply/>:window.location.hash==='#contractor-admin'?<ContractorAdmin/>:window.location.hash==='#mattress-suppliers'?<MattressQualification/>:window.location.hash==='#exceptions'?<ExceptionDashboard/>:window.location.hash==='#owner'?<OwnerCockpit/>:window.location.hash==='#control-center'?<PortableOperations/>:(h==='mattressrescue.com'?<MattressRescueStorefront onOps={()=>{window.location.hash='#control-center'}}/>:<PortableHome />)}
-    </StrictMode>
+const h=window.location.hostname.toLowerCase().replace(/^www\./,'');
+const key=`mm-view:${h}:${window.location.pathname}`;
+if(!sessionStorage.getItem(key)){
+  sessionStorage.setItem(key,'1');
+  api.post('/api/analytics-event',{type:'pageview',host:h,path:window.location.pathname,referrer:document.referrer.slice(0,300)}).catch(()=>{});
+}
+
+function RoutedApp(){
+  const[hash,setHash]=useState(window.location.hash);
+  useEffect(()=>{
+    const onHash=()=>setHash(window.location.hash);
+    window.addEventListener('hashchange',onHash);
+    return()=>window.removeEventListener('hashchange',onHash);
+  },[]);
+  return hash==='#portable-login'?<PortableLogin/>:
+    hash==='#migration'?<MigrationControl/>:
+    hash==='#data-migration'?<DataMigration/>:
+    hash==='#system-health'?<SystemHealth/>:
+    hash==='#revenue-lab'?<RevenueLab/>:
+    hash==='#profit-factory'?<ProfitFactory/>:
+    hash==='#dead-quotes'?<DeadQuoteRecovery/>:
+    hash==='#reactivation'?<PastCustomerReactivation/>:
+    hash.startsWith('#driver-job=')?<DriverJob/>:
+    hash.startsWith('#contractor=')?<ContractorPortal/>:
+    hash==='#contractor-apply'?<ContractorApply/>:
+    hash==='#contractor-admin'?<ContractorAdmin/>:
+    hash==='#mattress-suppliers'?<MattressQualification/>:
+    hash==='#exceptions'?<ExceptionDashboard/>:
+    hash==='#owner'?<OwnerCockpit/>:
+    hash==='#control-center'?<PortableOperations/>:
+    h==='mattressrescue.com'?<MattressRescueStorefront onOps={()=>{window.location.hash='#control-center'}}/>:<PortableHome/>;
+}
+
+createRoot(document.getElementById('root')!).render(
+  <StrictMode><RoutedApp/></StrictMode>
 );
