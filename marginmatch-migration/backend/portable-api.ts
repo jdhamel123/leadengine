@@ -1108,6 +1108,46 @@ route('GET', '/api/contractor-portal/:token', async (_request,params) => {
   });
 });
 
+route('POST', '/api/reactivation/import', async (request) => {
+  const admin=await requirePortableAdmin(request);
+  const body=await request.json() as Record<string,unknown>;
+  const tenantId=String(body.tenantId||'').trim(),rows=Array.isArray(body.customers)?body.customers as Array<Record<string,unknown>>:[];
+  if(!tenantId||!rows.length)return Response.json({error:'Tenant and customers are required'},{status:400});
+  let imported=0,skipped=0;
+  for(const x of rows.slice(0,1000)){
+    const email=String(x.email||'').trim().toLowerCase(),phone=String(x.phone||'').replace(/[^0-9+]/g,'');
+    const customer=String(x.customer||x.name||'').trim();
+    if(!customer||(!email&&!phone)){skipped++;continue}
+    await portableRuntime.db.add('reactivation-customers',[{
+      tenantId,customer,email,phone,lastService:String(x.lastService||''),lastServiceDate:String(x.lastServiceDate||''),
+      lifetimeValue:Math.max(0,Number(x.lifetimeValue||0)),status:'ready',
+      channel:email?'email':'sms',automationStatus:'held',productionMessagingEnabled:false,
+      importedBy:admin.email,createdAt:new Date().toISOString()
+    }]);imported++;
+  }
+  return Response.json({imported,skipped,messagingLocked:true});
+});
+
+route('GET', '/api/reactivation/queue', async (request) => {
+  await requirePortableAdmin(request);
+  const rows=(await portableRuntime.db.list<any>('reactivation-customers',{limit:2000})).items;
+  return Response.json({items:rows,summary:{total:rows.length,ready:rows.filter((x:any)=>x.status==='ready').length,
+    interested:rows.filter((x:any)=>x.status==='interested').length,won:rows.filter((x:any)=>x.status==='won').length,
+    recoveredRevenue:rows.filter((x:any)=>x.status==='won').reduce((n:number,x:any)=>n+Number(x.recoveredRevenue||0),0)}});
+});
+
+route('POST', '/api/reactivation/:id/outcome', async (request,params) => {
+  await requirePortableAdmin(request);const [x]=await portableRuntime.db.get<any>('reactivation-customers',[params.id]);
+  if(!x)return Response.json({error:'Customer not found'},{status:404});
+  const b=await request.json() as Record<string,unknown>,status=String(b.status||'');
+  if(!['interested','won','lost','human-needed','opted-out'].includes(status))return Response.json({error:'Unsupported outcome'},{status:400});
+  const record={...x,status,updatedAt:new Date().toISOString()};
+  if(status==='won')record.recoveredRevenue=Math.max(0,Number(b.recoveredRevenue||0));
+  if(status==='opted-out'){record.automationStatus='suppressed';await portableRuntime.db.add('customer-suppressions',[{tenantId:x.tenantId,email:x.email||'',phone:x.phone||'',reason:'reactivation-opt-out',createdAt:new Date().toISOString()}]);}
+  delete record.id;await portableRuntime.db.update('reactivation-customers',[{id:params.id,record}]);
+  return Response.json({id:params.id,status,recoveredRevenue:Number(record.recoveredRevenue||0)});
+});
+
 route('POST', '/api/dead-quotes/import', async (request) => {
   const admin=await requirePortableAdmin(request);
   const body=await request.json() as Record<string,unknown>;
