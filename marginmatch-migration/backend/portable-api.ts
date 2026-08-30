@@ -1108,6 +1108,35 @@ route('GET', '/api/contractor-portal/:token', async (_request,params) => {
   });
 });
 
+route('POST', '/api/bid-desk/vendor', async (request) => {
+ const admin=await requirePortableAdmin(request);const b=await request.json() as Record<string,unknown>;
+ const businessName=String(b.businessName||'').trim(),email=String(b.email||'').trim().toLowerCase();
+ if(!businessName||!email)return Response.json({error:'Business name and email are required'},{status:400});
+ const [id]=await portableRuntime.db.add('bid-desk-vendors',[{businessName,email,services:Array.isArray(b.services)?b.services:[],serviceZips:Array.isArray(b.serviceZips)?b.serviceZips:[],minJobValue:Math.max(0,Number(b.minJobValue||0)),maxDistanceMiles:Math.max(0,Number(b.maxDistanceMiles||0)),status:'active',autoSubmit:false,createdBy:admin.email,createdAt:new Date().toISOString()}]);
+ return Response.json({id,status:'active',autoSubmit:false},{status:201});
+});
+
+route('POST', '/api/bid-desk/opportunity', async (request) => {
+ const admin=await requirePortableAdmin(request);const b=await request.json() as Record<string,unknown>,title=String(b.title||'').trim();
+ if(!title)return Response.json({error:'Opportunity title is required'},{status:400});
+ const [id]=await portableRuntime.db.add('bid-desk-opportunities',[{title,buyer:String(b.buyer||''),service:String(b.service||''),zip:String(b.zip||''),estimatedValue:Math.max(0,Number(b.estimatedValue||0)),deadline:String(b.deadline||''),source:String(b.source||'manual'),sourceRef:String(b.sourceRef||''),requirements:String(b.requirements||'').slice(0,6000),status:'open',createdBy:admin.email,createdAt:new Date().toISOString()}]);
+ return Response.json({id,status:'open'},{status:201});
+});
+
+route('POST', '/api/bid-desk/:opportunityId/match', async (request,params) => {
+ await requirePortableAdmin(request);const [opp]=await portableRuntime.db.get<any>('bid-desk-opportunities',[params.opportunityId]);if(!opp)return Response.json({error:'Opportunity not found'},{status:404});
+ const vendors=(await portableRuntime.db.list<any>('bid-desk-vendors',{limit:2000})).items.filter((v:any)=>v.status==='active');
+ const matches=vendors.map((v:any)=>{let score=0;const services=(v.services||[]).map((x:any)=>String(x).toLowerCase()),zips=(v.serviceZips||[]).map(String);if(!opp.service||services.some((s:string)=>String(opp.service).toLowerCase().includes(s)||s.includes(String(opp.service).toLowerCase())))score+=60;if(!opp.zip||!zips.length||zips.includes(String(opp.zip)))score+=30;if(Number(opp.estimatedValue||0)>=Number(v.minJobValue||0))score+=10;return {vendorId:v.id,businessName:v.businessName,score}}).filter((x:any)=>x.score>=60).sort((a:any,b:any)=>b.score-a.score);
+ return Response.json({opportunity:opp,matches});
+});
+
+route('POST', '/api/bid-desk/:opportunityId/draft', async (request,params) => {
+ await requirePortableAdmin(request);const b=await request.json() as Record<string,unknown>,vendorId=String(b.vendorId||'');const [opp]=await portableRuntime.db.get<any>('bid-desk-opportunities',[params.opportunityId]),[vendor]=await portableRuntime.db.get<any>('bid-desk-vendors',[vendorId]);
+ if(!opp||!vendor)return Response.json({error:'Opportunity or vendor not found'},{status:404});
+ const [id]=await portableRuntime.db.add('bid-desk-drafts',[{opportunityId:params.opportunityId,vendorId,status:'draft',autoSubmit:false,subject:String(b.subject||('Bid response: '+opp.title)),body:String(b.body||'').slice(0,12000),price:Math.max(0,Number(b.price||0)),createdAt:new Date().toISOString()}]);
+ return Response.json({id,status:'draft',requiresApproval:true},{status:201});
+});
+
 route('POST', '/api/procurement/request', async (request) => {
  const b=await request.json() as Record<string,unknown>;
  const buyer=String(b.buyer||'').trim(),email=String(b.email||'').trim().toLowerCase(),item=String(b.item||'').trim(),deliveryZip=String(b.deliveryZip||'').trim();
