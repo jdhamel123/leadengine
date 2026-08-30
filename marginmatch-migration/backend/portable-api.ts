@@ -1108,6 +1108,37 @@ route('GET', '/api/contractor-portal/:token', async (_request,params) => {
   });
 });
 
+route('POST', '/api/procurement/request', async (request) => {
+ const b=await request.json() as Record<string,unknown>;
+ const buyer=String(b.buyer||'').trim(),email=String(b.email||'').trim().toLowerCase(),item=String(b.item||'').trim(),deliveryZip=String(b.deliveryZip||'').trim();
+ if(!buyer||!email||!item||!deliveryZip)return Response.json({error:'Buyer, email, item/service, and delivery ZIP are required'},{status:400});
+ const [id]=await portableRuntime.db.add('procurement-requests',[{buyer,email,phone:String(b.phone||'').replace(/[^0-9+]/g,''),item,quantity:Math.max(1,Number(b.quantity||1)),requirements:String(b.requirements||'').slice(0,4000),deliveryZip,neededBy:String(b.neededBy||''),budget:Math.max(0,Number(b.budget||0)),status:'sourcing',createdAt:new Date().toISOString()}]);
+ return Response.json({id,status:'sourcing'},{status:201});
+});
+
+route('POST', '/api/procurement/:id/bid', async (request,params) => {
+ const admin=await requirePortableAdmin(request);const [req]=await portableRuntime.db.get<any>('procurement-requests',[params.id]);if(!req)return Response.json({error:'Request not found'},{status:404});
+ const b=await request.json() as Record<string,unknown>,vendor=String(b.vendor||'').trim(),vendorCost=Math.max(0,Number(b.vendorCost||0));if(!vendor||!vendorCost)return Response.json({error:'Vendor and vendor cost are required'},{status:400});
+ const markupType=String(b.markupType||'percent'),markup=Math.max(0,Number(b.markup||15));
+ const customerPrice=markupType==='fixed'?vendorCost+markup:vendorCost*(1+markup/100);
+ const [bidId]=await portableRuntime.db.add('procurement-bids',[{requestId:params.id,vendor,vendorEmail:String(b.vendorEmail||'').trim().toLowerCase(),vendorCost,customerPrice:Number(customerPrice.toFixed(2)),grossMargin:Number((customerPrice-vendorCost).toFixed(2)),availability:String(b.availability||''),deliveryTerms:String(b.deliveryTerms||''),status:'candidate',createdBy:admin.email,createdAt:new Date().toISOString()}]);
+ return Response.json({bidId,customerPrice:Number(customerPrice.toFixed(2)),grossMargin:Number((customerPrice-vendorCost).toFixed(2))},{status:201});
+});
+
+route('GET', '/api/procurement/:id/offers', async (request,params) => {
+ await requirePortableAdmin(request);const [req]=await portableRuntime.db.get<any>('procurement-requests',[params.id]);if(!req)return Response.json({error:'Request not found'},{status:404});
+ const bids=(await portableRuntime.db.list<any>('procurement-bids',{limit:2000})).items.filter((x:any)=>String(x.requestId)===params.id).sort((a:any,b:any)=>Number(a.customerPrice)-Number(b.customerPrice));
+ return Response.json({request:req,bids,best:bids[0]||null});
+});
+
+route('POST', '/api/procurement/:id/award', async (request,params) => {
+ await requirePortableAdmin(request);const b=await request.json() as Record<string,unknown>,bidId=String(b.bidId||'');const [req]=await portableRuntime.db.get<any>('procurement-requests',[params.id]),[bid]=await portableRuntime.db.get<any>('procurement-bids',[bidId]);
+ if(!req||!bid||String(bid.requestId)!==params.id)return Response.json({error:'Request or bid not found'},{status:404});
+ const rr={...req,status:'awarded',winningBidId:bidId,customerPrice:bid.customerPrice,vendorCost:bid.vendorCost,grossMargin:bid.grossMargin,awardedAt:new Date().toISOString()};delete rr.id;await portableRuntime.db.update('procurement-requests',[{id:params.id,record:rr}]);
+ const br={...bid,status:'awarded',awardedAt:new Date().toISOString()};delete br.id;await portableRuntime.db.update('procurement-bids',[{id:bidId,record:br}]);
+ return Response.json({requestId:params.id,bidId,status:'awarded',customerPrice:bid.customerPrice,grossMargin:bid.grossMargin});
+});
+
 route('POST', '/api/slot-filler/cancellation', async (request) => {
  const admin=await requirePortableAdmin(request);const b=await request.json() as Record<string,unknown>,tenantId=String(b.tenantId||'').trim();
  const startsAt=String(b.startsAt||'').trim(),service=String(b.service||'').trim();
