@@ -1108,6 +1108,31 @@ route('GET', '/api/contractor-portal/:token', async (_request,params) => {
   });
 });
 
+route('POST', '/api/estimate-chase/import', async (request) => {
+  const admin=await requirePortableAdmin(request);const b=await request.json() as Record<string,unknown>;
+  const tenantId=String(b.tenantId||'').trim(),rows=Array.isArray(b.estimates)?b.estimates as Array<Record<string,unknown>>:[];
+  if(!tenantId||!rows.length)return Response.json({error:'Tenant and estimates are required'},{status:400});
+  let imported=0,skipped=0;
+  for(const x of rows.slice(0,1000)){const customer=String(x.customer||x.name||'').trim(),email=String(x.email||'').trim().toLowerCase(),phone=String(x.phone||'').replace(/[^0-9+]/g,'');
+    if(!customer||(!email&&!phone)){skipped++;continue}
+    await portableRuntime.db.add('estimate-chase',[{tenantId,customer,email,phone,estimateRef:String(x.estimateRef||''),service:String(x.service||''),amount:Math.max(0,Number(x.amount||0)),estimateDate:String(x.estimateDate||''),status:'open',followUpStage:0,automationStatus:'held',productionMessagingEnabled:false,importedBy:admin.email,createdAt:new Date().toISOString()}]);imported++}
+  return Response.json({imported,skipped,messagingLocked:true});
+});
+
+route('GET', '/api/estimate-chase/queue', async (request) => {
+  await requirePortableAdmin(request);const rows=(await portableRuntime.db.list<any>('estimate-chase',{limit:2000})).items;
+  return Response.json({items:rows,summary:{total:rows.length,open:rows.filter((x:any)=>x.status==='open').length,won:rows.filter((x:any)=>x.status==='won').length,
+  pipelineValue:rows.filter((x:any)=>x.status==='open').reduce((n:number,x:any)=>n+Number(x.amount||0),0),
+  wonRevenue:rows.filter((x:any)=>x.status==='won').reduce((n:number,x:any)=>n+Number(x.wonRevenue||x.amount||0),0)}});
+});
+
+route('POST', '/api/estimate-chase/:id/outcome', async (request,params) => {
+ await requirePortableAdmin(request);const [x]=await portableRuntime.db.get<any>('estimate-chase',[params.id]);if(!x)return Response.json({error:'Estimate not found'},{status:404});
+ const b=await request.json() as Record<string,unknown>,status=String(b.status||'');if(!['open','interested','won','lost','human-needed','opted-out'].includes(status))return Response.json({error:'Unsupported outcome'},{status:400});
+ const record={...x,status,updatedAt:new Date().toISOString()};if(status==='won')record.wonRevenue=Math.max(0,Number(b.wonRevenue||x.amount||0));if(status==='opted-out'){record.automationStatus='suppressed';await portableRuntime.db.add('customer-suppressions',[{tenantId:x.tenantId,email:x.email||'',phone:x.phone||'',reason:'estimate-chase-opt-out',createdAt:new Date().toISOString()}]);}
+ delete record.id;await portableRuntime.db.update('estimate-chase',[{id:params.id,record}]);return Response.json({id:params.id,status,wonRevenue:Number(record.wonRevenue||0)});
+});
+
 route('POST', '/api/reactivation/import', async (request) => {
   const admin=await requirePortableAdmin(request);
   const body=await request.json() as Record<string,unknown>;
