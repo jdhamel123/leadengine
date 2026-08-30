@@ -1108,6 +1108,35 @@ route('GET', '/api/contractor-portal/:token', async (_request,params) => {
   });
 });
 
+route('POST', '/api/slot-filler/cancellation', async (request) => {
+ const admin=await requirePortableAdmin(request);const b=await request.json() as Record<string,unknown>,tenantId=String(b.tenantId||'').trim();
+ const startsAt=String(b.startsAt||'').trim(),service=String(b.service||'').trim();
+ if(!tenantId||!startsAt||!service)return Response.json({error:'Tenant, service, and start time are required'},{status:400});
+ const [id]=await portableRuntime.db.add('slot-filler-slots',[{tenantId,service,startsAt,durationMinutes:Math.max(15,Number(b.durationMinutes||60)),value:Math.max(0,Number(b.value||0)),status:'open',automationStatus:'held',productionMessagingEnabled:false,createdBy:admin.email,createdAt:new Date().toISOString()}]);
+ return Response.json({id,status:'open',messagingLocked:true},{status:201});
+});
+
+route('POST', '/api/slot-filler/waitlist', async (request) => {
+ const admin=await requirePortableAdmin(request);const b=await request.json() as Record<string,unknown>,tenantId=String(b.tenantId||'').trim(),customer=String(b.customer||'').trim(),email=String(b.email||'').trim().toLowerCase(),phone=String(b.phone||'').replace(/[^0-9+]/g,'');
+ if(!tenantId||!customer||(!email&&!phone))return Response.json({error:'Tenant, customer, and contact are required'},{status:400});
+ const [id]=await portableRuntime.db.add('slot-filler-waitlist',[{tenantId,customer,email,phone,services:Array.isArray(b.services)?b.services:[],status:'waiting',automationStatus:'held',createdBy:admin.email,createdAt:new Date().toISOString()}]);
+ return Response.json({id,status:'waiting'},{status:201});
+});
+
+route('POST', '/api/slot-filler/:slotId/fill', async (request,params) => {
+ await requirePortableAdmin(request);const [slot]=await portableRuntime.db.get<any>('slot-filler-slots',[params.slotId]);if(!slot)return Response.json({error:'Slot not found'},{status:404});
+ if(slot.status!=='open')return Response.json({error:'Slot is not open'},{status:409});
+ const b=await request.json() as Record<string,unknown>,waitlistId=String(b.waitlistId||'');const [w]=await portableRuntime.db.get<any>('slot-filler-waitlist',[waitlistId]);if(!w)return Response.json({error:'Waitlist customer not found'},{status:404});
+ const sr={...slot,status:'filled',filledBy:waitlistId,filledAt:new Date().toISOString()};delete sr.id;await portableRuntime.db.update('slot-filler-slots',[{id:params.slotId,record:sr}]);
+ const wr={...w,status:'booked',slotId:params.slotId,bookedAt:new Date().toISOString()};delete wr.id;await portableRuntime.db.update('slot-filler-waitlist',[{id:waitlistId,record:wr}]);
+ return Response.json({slotId:params.slotId,waitlistId,status:'filled',recoveredValue:Number(slot.value||0)});
+});
+
+route('GET', '/api/slot-filler/summary', async (request) => {
+ await requirePortableAdmin(request);const slots=(await portableRuntime.db.list<any>('slot-filler-slots',{limit:2000})).items,wait=(await portableRuntime.db.list<any>('slot-filler-waitlist',{limit:5000})).items;
+ return Response.json({slots,summary:{open:slots.filter((x:any)=>x.status==='open').length,filled:slots.filter((x:any)=>x.status==='filled').length,waiting:wait.filter((x:any)=>x.status==='waiting').length,recoveredValue:slots.filter((x:any)=>x.status==='filled').reduce((n:number,x:any)=>n+Number(x.value||0),0)}});
+});
+
 route('POST', '/api/referral-loop/job-complete', async (request) => {
  const admin=await requirePortableAdmin(request);const b=await request.json() as Record<string,unknown>;
  const tenantId=String(b.tenantId||'').trim(),customer=String(b.customer||'').trim(),email=String(b.email||'').trim().toLowerCase(),phone=String(b.phone||'').replace(/[^0-9+]/g,'');
