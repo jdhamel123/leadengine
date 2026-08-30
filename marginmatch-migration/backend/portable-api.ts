@@ -1108,6 +1108,27 @@ route('GET', '/api/contractor-portal/:token', async (_request,params) => {
   });
 });
 
+route('POST', '/api/referral-loop/job-complete', async (request) => {
+ const admin=await requirePortableAdmin(request);const b=await request.json() as Record<string,unknown>;
+ const tenantId=String(b.tenantId||'').trim(),customer=String(b.customer||'').trim(),email=String(b.email||'').trim().toLowerCase(),phone=String(b.phone||'').replace(/[^0-9+]/g,'');
+ if(!tenantId||!customer||(!email&&!phone))return Response.json({error:'Tenant, customer, and contact are required'},{status:400});
+ const [id]=await portableRuntime.db.add('referral-loop',[{tenantId,customer,email,phone,jobRef:String(b.jobRef||''),service:String(b.service||''),jobValue:Math.max(0,Number(b.jobValue||0)),status:'feedback-ready',feedbackScore:null,reviewRequested:false,referralRequested:false,automationStatus:'held',productionMessagingEnabled:false,createdBy:admin.email,createdAt:new Date().toISOString()}]);
+ return Response.json({id,status:'feedback-ready',messagingLocked:true},{status:201});
+});
+
+route('POST', '/api/referral-loop/:id/feedback', async (request,params) => {
+ const [x]=await portableRuntime.db.get<any>('referral-loop',[params.id]);if(!x)return Response.json({error:'Job not found'},{status:404});
+ const b=await request.json() as Record<string,unknown>,score=Math.min(5,Math.max(1,Number(b.score||0)));if(!Number.isFinite(score))return Response.json({error:'Score required'},{status:400});
+ const happy=score>=4,record={...x,feedbackScore:score,feedbackText:String(b.feedback||'').slice(0,2000),status:happy?'happy':'human-needed',reviewRequested:happy,referralRequested:happy,updatedAt:new Date().toISOString()};delete record.id;
+ await portableRuntime.db.update('referral-loop',[{id:params.id,record}]);
+ return Response.json({id:params.id,status:record.status,next:happy?'review-and-referral':'private-recovery'});
+});
+
+route('GET', '/api/referral-loop/summary', async (request) => {
+ await requirePortableAdmin(request);const rows=(await portableRuntime.db.list<any>('referral-loop',{limit:2000})).items;
+ return Response.json({items:rows,summary:{completed:rows.length,happy:rows.filter((x:any)=>x.status==='happy').length,humanNeeded:rows.filter((x:any)=>x.status==='human-needed').length,reviewsRequested:rows.filter((x:any)=>x.reviewRequested).length,referralsRequested:rows.filter((x:any)=>x.referralRequested).length}});
+});
+
 route('POST', '/api/estimate-chase/import', async (request) => {
   const admin=await requirePortableAdmin(request);const b=await request.json() as Record<string,unknown>;
   const tenantId=String(b.tenantId||'').trim(),rows=Array.isArray(b.estimates)?b.estimates as Array<Record<string,unknown>>:[];
