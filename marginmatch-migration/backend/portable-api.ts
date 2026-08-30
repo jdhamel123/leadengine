@@ -1108,6 +1108,59 @@ route('GET', '/api/contractor-portal/:token', async (_request,params) => {
   });
 });
 
+route('POST', '/api/dead-quotes/import', async (request) => {
+  const admin=await requirePortableAdmin(request);
+  const body=await request.json() as Record<string,unknown>;
+  const tenantId=String(body.tenantId||'').trim();
+  const rows=Array.isArray(body.quotes)?body.quotes as Array<Record<string,unknown>>:[];
+  if(!tenantId||!rows.length)return Response.json({error:'Tenant and quotes are required'},{status:400});
+  let imported=0,skipped=0;
+  for(const q of rows.slice(0,500)){
+    const email=String(q.email||'').trim().toLowerCase(),phone=String(q.phone||'').replace(/[^0-9+]/g,'');
+    const customer=String(q.customer||q.name||'').trim(),quoteRef=String(q.quoteRef||'').trim();
+    if(!customer||(!email&&!phone)){skipped++;continue}
+    await portableRuntime.db.add('dead-quote-opportunities',[{
+      tenantId,customer,email,phone,quoteRef,
+      service:String(q.service||''),quotedAmount:Math.max(0,Number(q.quotedAmount||0)),
+      quoteDate:String(q.quoteDate||''),status:'ready',
+      channel:email?'email':'sms',
+      productionMessagingEnabled:false,
+      importedBy:admin.email,createdAt:new Date().toISOString()
+    }]); imported++;
+  }
+  return Response.json({imported,skipped,messagingLocked:true});
+});
+
+route('GET', '/api/dead-quotes/queue', async (request) => {
+  await requirePortableAdmin(request);
+  const rows=(await portableRuntime.db.list<any>('dead-quote-opportunities',{limit:1000})).items;
+  return Response.json({items:rows,summary:{
+    total:rows.length,
+    ready:rows.filter((x:any)=>x.status==='ready').length,
+    interested:rows.filter((x:any)=>x.status==='interested').length,
+    won:rows.filter((x:any)=>x.status==='won').length,
+    recoveredRevenue:rows.filter((x:any)=>x.status==='won').reduce((n:number,x:any)=>n+Number(x.recoveredRevenue||0),0)
+  }});
+});
+
+route('POST', '/api/dead-quotes/:id/outcome', async (request,params) => {
+  await requirePortableAdmin(request);
+  const [x]=await portableRuntime.db.get<any>('dead-quote-opportunities',[params.id]);
+  if(!x)return Response.json({error:'Quote opportunity not found'},{status:404});
+  const b=await request.json() as Record<string,unknown>,status=String(b.status||'');
+  if(!['interested','not-interested','won','lost','human-needed','opted-out'].includes(status))
+    return Response.json({error:'Unsupported outcome'},{status:400});
+  const record={...x,status,updatedAt:new Date().toISOString()};
+  if(status==='won')record.recoveredRevenue=Math.max(0,Number(b.recoveredRevenue||x.quotedAmount||0));
+  if(status==='opted-out')record.automationStatus='suppressed';
+  delete record.id;
+  await portableRuntime.db.update('dead-quote-opportunities',[{id:params.id,record}]);
+  if(status==='opted-out')await portableRuntime.db.add('customer-suppressions',[{
+    tenantId:x.tenantId,email:x.email||'',phone:x.phone||'',reason:'dead-quote-opt-out',createdAt:new Date().toISOString()
+  }]);
+  return Response.json({id:params.id,status,recoveredRevenue:Number(record.recoveredRevenue||0)});
+});
+
 route('POST', '/api/profit-factory/experiment', async (request) => {
   const admin=await requirePortableAdmin(request);
   const body=await request.json() as Record<string,unknown>;
