@@ -138,10 +138,11 @@ services:
       app:
         condition: service_healthy
     environment:
-      PORTABLE_INTERNAL_URL: http://app:3000
+      PORTABLE_INTERNAL_URL: http://marginmatch-green:3000
       PORTABLE_SESSION_SECRET: ${PORTABLE_SESSION_SECRET:?Set PORTABLE_SESSION_SECRET}
       ADMIN_EMAIL_ALLOWLIST: ${ADMIN_EMAIL_ALLOWLIST:?Set ADMIN_EMAIL_ALLOWLIST}
       SCHEDULED_ADMIN_EMAIL: ${SCHEDULED_ADMIN_EMAIL:-}
+      MM_ADMIN_TOKEN: ${MM_ADMIN_TOKEN}
     command: >
       /bin/sh -c "
       while true; do
