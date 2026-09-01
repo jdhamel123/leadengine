@@ -1,0 +1,80 @@
+name: Deploy Green Candidate
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout validated source
+        uses: actions/checkout@v4
+
+      - name: Prepare SSH
+        env:
+          VPS_SSH_KEY: ${{ secrets.VPS_SSH_KEY }}
+          VPS_HOST: 159.65.238.181
+        run: |
+          test -n "$VPS_SSH_KEY"
+          mkdir -p ~/.ssh
+          printf '%s\n' "$VPS_SSH_KEY" > ~/.ssh/id_ed25519
+          chmod 600 ~/.ssh/id_ed25519
+          ssh-keyscan -H "$VPS_HOST" >> ~/.ssh/known_hosts
+
+      - name: Package candidate
+        run: |
+          tar             --exclude=.git             --exclude=node_modules             --exclude=dist             --exclude=data             --exclude=deploy/.env             -czf /tmp/marginmatch-green.tgz .
+
+      - name: Upload candidate
+        env:
+          VPS_HOST: 159.65.238.181
+          VPS_USER: ${{ secrets.VPS_USER || 'root' }}
+        run: |
+          test -n "$VPS_USER"
+          scp -i ~/.ssh/id_ed25519 /tmp/marginmatch-green.tgz "$VPS_USER@$VPS_HOST:/tmp/marginmatch-green.tgz"
+
+      - name: Deploy isolated candidate
+        env:
+          VPS_HOST: 159.65.238.181
+          VPS_USER: ${{ secrets.VPS_USER || 'root' }}
+        run: |
+          ssh -i ~/.ssh/id_ed25519 "$VPS_USER@$VPS_HOST" 'sh -s' <<'REMOTE'
+          set -eu
+          ROOT=/opt/marginmatch/marginmatch-green
+          mkdir -p "$ROOT"
+          if [ -f "$ROOT/deploy/.env" ]; then
+            cp "$ROOT/deploy/.env" /tmp/marginmatch-green.env
+          fi
+          find "$ROOT" -mindepth 1 -maxdepth 1 ! -name deploy -exec rm -rf {} +
+          mkdir -p "$ROOT/deploy"
+          find "$ROOT/deploy" -mindepth 1 -maxdepth 1 ! -name .env -exec rm -rf {} +
+          tar -xzf /tmp/marginmatch-green.tgz -C "$ROOT"
+          if [ -f /tmp/marginmatch-green.env ]; then
+            mv /tmp/marginmatch-green.env "$ROOT/deploy/.env"
+          fi
+          test -f "$ROOT/deploy/.env"
+          cd "$ROOT"
+          docker compose -f deploy/docker-compose.validation.yml --env-file deploy/.env up -d --build
+          i=0
+          while [ "$i" -lt 30 ]; do
+            if curl -fsS http://127.0.0.1:3100/api/_healthcheck >/dev/null 2>&1; then
+              echo "Green candidate healthy."
+              curl -fsS http://127.0.0.1:3100/api/_healthcheck
+              exit 0
+            fi
+            i=$((i+1))
+            sleep 2
+          done
+          docker compose -f deploy/docker-compose.validation.yml logs --tail=200 marginmatch-green
+          exit 1
+          REMOTE
+
+      - name: Verify public app from VPS port
+        env:
+          VPS_HOST: 159.65.238.181
+          VPS_USER: ${{ secrets.VPS_USER || 'root' }}
+        run: |
+          ssh -i ~/.ssh/id_ed25519 "$VPS_USER@$VPS_HOST"             "curl -fsS http://127.0.0.1:3100/api/_healthcheck && curl -fsS -o /dev/null http://127.0.0.1:3100/"
