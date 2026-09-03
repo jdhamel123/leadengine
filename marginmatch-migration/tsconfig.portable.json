@@ -27,5 +27,9 @@
     "backend/twilio-portable.ts",
     "backend/storage-supabase.ts",
     "tests/**/*.ts"
+  ],
+  "exclude": [
+    "src/App.tsx",
+    "src/ControlCenter.tsx"
   ]
 }
