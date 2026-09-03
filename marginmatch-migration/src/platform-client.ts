@@ -1,6 +1,6 @@
 /**
  * Host-independent browser client.
- * Replaces @appdeploy/client with standard fetch + pluggable auth.
+ * Standard fetch client with pluggable authentication for independent hosting.
  */
 type Json = Record<string, unknown> | unknown[] | string | number | boolean | null;
 
