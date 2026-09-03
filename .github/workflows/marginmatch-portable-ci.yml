@@ -4,6 +4,7 @@ on:
   push:
     branches:
       - marginmatch-migration
+      - recovery
     paths:
       - 'marginmatch-migration/**'
       - '.github/workflows/marginmatch-portable-ci.yml'
