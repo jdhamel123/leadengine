@@ -11,7 +11,7 @@ export function PortableOperations(){
   const[data,setData]=useState<Ops|null>(null);
   const[msg,setMsg]=useState('Loading portable operations…');
   async function load(){
-    try{const r=await api.get('/api/portable-operations');setData(r.data);setMsg('');}
+    try{const r=await api.get('/api/portable-operations');const payload=r.data;if(!payload||typeof payload!=='object'||Array.isArray(payload)||!('summary' in payload))throw new Error('Portable API is not connected to this preview.');setData(payload as Ops);setMsg('');}
     catch(e:any){setData(null);setMsg(e?.message||'Owner access required.');}
   }
   useEffect(()=>{load()},[]);
