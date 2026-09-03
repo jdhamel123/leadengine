@@ -15,6 +15,8 @@ import { PortableOperations } from './PortableOperations';
 import { PortableHome } from './PortableHome';
 import './index.css';
 
+window.addEventListener('hashchange',()=>window.location.reload());
+
 const h=window.location.hostname.toLowerCase().replace(/^www\./,'');const key=`mm-view:${h}:${window.location.pathname}`;if(!sessionStorage.getItem(key)){sessionStorage.setItem(key,'1');api.post('/api/analytics-event',{type:'pageview',host:h,path:window.location.pathname,referrer:document.referrer.slice(0,300)}).catch(()=>{});}createRoot(document.getElementById('root')!).render(
     <StrictMode>
         {window.location.hash==='#portable-login'?<PortableLogin/>:window.location.hash==='#migration'?<MigrationControl/>:window.location.hash.startsWith('#driver-job=')?<DriverJob/>:window.location.hash.startsWith('#contractor=')?<ContractorPortal/>:window.location.hash==='#contractor-apply'?<ContractorApply/>:window.location.hash==='#contractor-admin'?<ContractorAdmin/>:window.location.hash==='#mattress-suppliers'?<MattressQualification/>:window.location.hash==='#exceptions'?<ExceptionDashboard/>:window.location.hash==='#owner'?<OwnerCockpit/>:window.location.hash==='#control-center'?<PortableOperations/>:(h==='mattressrescue.com'?<MattressRescueStorefront/>:<PortableHome />)}
